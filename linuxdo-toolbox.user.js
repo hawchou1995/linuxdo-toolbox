@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LINUX DO 工具箱
 // @namespace    https://linux.do/
-// @version      2.7.0
+// @version      2.7.1
 // @description  LINUX DO 工具箱：七个功能在右下角面板各自独立开关，名字一律四个汉字 —— ① 密文自解（正文 Base64 就地解码，含手动解码面板）② 原生复制（取 /raw/ 原生 Markdown 并附转载来源）③ 外链解锁（外链免登录可见，强制新标签页）④ 随读回应（跟随阅读随机回应，跳过爱心与 +1）⑤ 已读提速（批量同步已读帖数与阅读时长）⑥ 过盾重试（盾验证失败时自动跳回盾页重试）⑦ 只看此人（每层楼用户名旁一键只看该用户的帖子，跳过点头像两步，只发过 1 帖的用户也能筛）。面板两级导航：主看板一行一个功能，点进去是它自己的子看板；所有看板宽高统一，切换不跳动；底部另有「一键全默认」。仓库 github.com/hawchou1995/linuxdo-toolbox · 论坛 qingju.me
 // @author       牛来 · XAUTHUB · HawChow · Sunwuyuan · adodo · Pipecraft
 // @match        https://linux.do/*
@@ -18,6 +18,23 @@
 // ==/UserScript==
 
 /*
+ * v2.7.1 —— 修「只看此人」点了没反应（v2.7.0 的点击是坏的，这里修好并换成官方动作）：
+ *          ① 症状：v2.7.0 里点「只看此人」什么都不发生 —— 不跳转、不筛选、控制台也没报错。
+ *          ② 根因（真机实测）：点击处理里先 preventDefault 挡住了 <a> 的原生跳转，再调
+ *             DiscourseURL.routeTo(url)，而 routeTo 在本站这版 Discourse 上**静默什么都不做**
+ *             （不抛错、不跳转）。两头都不动，于是「点了像没点」。另外 routeTo 就算动了，
+ *             光改 URL 也不会重筛 —— 话题路由的 username_filters 没开 refreshModel。
+ *          ③ 改法：不再绕 URL，直接走官方那条动作 —— 从 container 取 controller:topic 的
+ *             model.postStream，调它的 filterParticipant(username)，与「点用户卡片 → 点话题中的
+ *             N 个帖子」调的是同一个函数：SPA 内即时生效、楼主帖保留在首位、带原生「显示全部」提示条，
+ *             按钮也跟着变成「显示全部」（还原调 postStream.cancelFilter + refresh）。
+ *          ④ 兜底：万一拿不到 container / 模型（别的 Discourse 版本、非话题页），退化成整页跳
+ *             /t/<slug>/<id>?username_filters=<用户名>（这条 URL 本身就等价官方筛选，已实测）。
+ *          ⑤ 筛选状态的权威来源改成 postStream.streamFilters.username_filters（模型），
+ *             URL 只当退化来源 —— 因为走官方动作后 URL 上不一定带这个参数。
+ *          ⑥ 真机验收：单实例 linux.do 话题页实点 → 原生提示条「正在查看此用户的 1 个帖子：…全部显示」、
+ *             只剩该用户帖 + 楼主帖、按钮变「显示全部」、全程无整页刷新；把 require 换成无容器后再点 →
+ *             整页跳到 ?username_filters= 且筛选同样生效。离线自检 19 项（含这两条路径）全绿。
  * v2.7.0 —— 新增第七个功能「只看此人」+ 项目落 GitHub：
  *          ① 「只看此人」：每层楼的用户名右侧长出一个「只看此人」按钮，点一下直接套用 Discourse 原生的
  *             「话题中的 N 个帖子」筛选 —— 跳过「点头像 → 点话题中的帖子」两步。
@@ -235,7 +252,7 @@
     { id: 'autoReact', label: '随读回应', hint: '只对当前可见且未回应的楼层随机回应（跳过爱心与 +1）' },
     { id: 'readBoost', label: '已读提速', hint: '向 /topics/timings 批量同步已读记录，快速刷取已读帖数与阅读时间' },
     { id: 'cfShield', label: '过盾重试', hint: 'Cloudflare 盾验证失败时自动跳回盾页重试；盾页失效则按 redirect 或首页兜底' },
-    { id: 'onlyUser', label: '只看此人', hint: '在每层楼用户名右侧加一键按钮，直接套用 Discourse 原生「话题中的帖子」筛选；只有 1 帖的用户也能筛' }
+    { id: 'onlyUser', label: '只看此人', hint: '在每层楼用户名右侧加一键按钮，直接调 Discourse 官方的 postStream.filterParticipant（与「点用户卡片→点话题中的 N 个帖子」同一个动作）；只有 1 帖的用户也能筛' }
   ];
   const FLAG_DEFAULTS = { b64: true, mdCopy: true, linkUnlock: true, autoReact: true, readBoost: true, cfShield: true, onlyUser: true };
 
@@ -3569,10 +3586,13 @@
   //   在每层楼的用户名右侧长出一个「只看此人」按钮，点一下直接套用 Discourse 原生的
   //   「话题中的 N 个帖子」筛选 —— 跳过「点头像 → 点话题中的帖子」两步。
   //
-  //   实现：跳 /t/<slug>/<id>?username_filters=<用户名>。这条 query 正是官方的服务端筛选参数
-  //   （路由侧 routes/topic.js 的 queryParams.username_filters，模型侧 post-stream.js 的
-  //   streamFilters.username_filters），因此结果与官方入口完全一致：只列该用户的帖子、
-  //   楼主帖恒定保留在首位，并带原生的「显示全部」提示条。
+  //   实现：直接调官方那条动作 —— container → controller:topic → model.postStream，
+  //   执行 postStream.filterParticipant(username)。这就是「点用户卡片 → 点话题中的 N 个帖子」
+  //   在调的同一个函数（models/post-stream.js），所以行为完全一致：SPA 内即时生效、只列该用户的帖子、
+  //   楼主帖恒定保留在首位，并带原生的「显示全部」提示条；还原走 postStream.cancelFilter + refresh。
+  //   兜底：拿不到 container / 模型（别的 Discourse 版本、非话题页）时，退化成整页跳
+  //   /t/<slug>/<id>?username_filters=<用户名> —— 这条 query 是官方的服务端筛选参数
+  //   （路由侧 routes/topic.js 的 queryParams.username_filters），结果同样等价于官方筛选。
   //
   //   与官方的差别（正是本功能存在的理由）：官方那个入口藏在用户卡片里，且只在
   //   topicPostCount >= 2 时才出现（user-card-contents.gjs 的 enoughPostsForFiltering）——
@@ -3628,8 +3648,19 @@
       return null;
     }
 
-    // 当前 URL 上的筛选用户（官方口径：逗号分隔的 username_filters）
+    // 当前筛选：优先读 Discourse 自己那份（postStream.userFilters），URL 只当退化来源 ——
+    // 走官方动作筛选后 URL 上不一定带 username_filters，权威状态在模型里。
     function currentFilter() {
+      var ctx = discourseTopicContext();
+      if (ctx && ctx.postStream) {
+        var uf = null;
+        try { uf = ctx.postStream.get ? ctx.postStream.get('userFilters') : ctx.postStream.userFilters; } catch (e) { uf = null; }
+        if (uf && uf.length) {
+          var list = [];
+          for (var i = 0; i < uf.length; i++) if (uf[i]) list.push(String(uf[i]));
+          if (list.length) return list;
+        }
+      }
       try {
         var raw = new URLSearchParams(location.search).get('username_filters');
         if (!raw) return [];
@@ -3637,7 +3668,7 @@
       } catch (e) { return []; }
     }
 
-    // 生成 URL：保留既有 query，只改 username_filters；换筛选时回到第一屏
+    // 退化路径用的 URL：保留既有 query，只改 username_filters
     function buildUrl(user, on) {
       var base = topicPath();
       if (!base) return null;
@@ -3649,16 +3680,65 @@
       return base + (s ? ('?' + s) : '');
     }
     KitUI.buildOnlyUserUrl = buildUrl;          // 只读出口，供自检断言 URL 构造
+    // 只读决策出口：与点击走同一条判据，但不真跳转（供自检 / 调试读取；同 cfShield 的 cfPlanJump）
+    KitUI.ouPlan = function (user) {
+      var ctx = discourseTopicContext();
+      var url = buildUrl(user, true);
+      if (ctx && typeof ctx.postStream.filterParticipant === 'function') return { mode: 'spa', user: user, url: url };
+      return { mode: url ? 'load' : null, user: user, url: url };
+    };
 
-    // 优先走 Discourse 站内路由（SPA 平滑切换）；拿不到路由就用整页跳转兜底
-    function navigate(url) {
+    // 官方那套上下文：container → controller:topic → model.postStream。
+    // 拿到了就能直接调官方的 filterParticipant / cancelFilter —— 点击头像那个入口用的就是它。
+    function discourseTopicContext() {
       try {
         var mod = window.require && window.require('discourse/lib/url');
         var DU = mod && (mod.default || mod);
-        if (DU && typeof DU.routeTo === 'function') { DU.routeTo(url); return true; }
-      } catch (e) { /* 退化到整页跳转 */ }
-      location.href = url;
-      return true;
+        var container = DU && DU.container;
+        if (!container || !container.lookup) return null;
+        var ctrl = container.lookup('controller:topic');
+        if (!ctrl) return null;
+        var ps = ctrl.get ? ctrl.get('model.postStream') : (ctrl.model && ctrl.model.postStream);
+        if (!ps) return null;
+        return { controller: ctrl, postStream: ps };
+      } catch (e) { return null; }
+    }
+
+    // 筛选：优先调官方动作（与点头像完全同源，SPA 内即时生效）；
+    // 拿不到容器 / 模型时才退化成整页跳 /t/<slug>/<id>?username_filters=<用户名>。
+    // 返回 'spa' / 'load' / null（不在话题页），并把出口记到 KitUI.ouLastAction 供自检断言。
+    function applyUserFilter(user) {
+      var ctx = discourseTopicContext();
+      if (ctx && typeof ctx.postStream.filterParticipant === 'function') {
+        try {
+          ctx.postStream.filterParticipant(user);
+          KitUI.ouLastAction = { mode: 'spa', user: user, url: buildUrl(user, true) };
+          return 'spa';
+        } catch (e) { /* 退化到整页跳 */ }
+      }
+      var url = buildUrl(user, true);
+      if (!url) { KitUI.ouLastAction = { mode: null, user: user, url: null }; return null; }
+      KitUI.ouLastAction = { mode: 'load', user: user, url: url };
+      location.assign(url);
+      return 'load';
+    }
+
+    // 还原：官方 cancelFilter + refresh；拿不到容器才整页跳去掉了参数的 URL。
+    function clearUserFilter() {
+      var ctx = discourseTopicContext();
+      if (ctx && typeof ctx.postStream.cancelFilter === 'function') {
+        try {
+          ctx.postStream.cancelFilter();
+          if (typeof ctx.postStream.refresh === 'function') ctx.postStream.refresh();
+          KitUI.ouLastAction = { mode: 'spa', user: null, url: buildUrl(null, false) };
+          return 'spa';
+        } catch (e) { /* 退化到整页跳 */ }
+      }
+      var url = buildUrl(null, false);
+      if (!url) { KitUI.ouLastAction = { mode: null, user: null, url: null }; return null; }
+      KitUI.ouLastAction = { mode: 'load', user: null, url: url };
+      location.assign(url);
+      return 'load';
     }
 
     // 三级回退取用户名：头像 data-user-card → 用户名行文本 → /u/ 链接
@@ -3707,10 +3787,9 @@
         ev.stopPropagation();
         var cur = currentFilter();
         var stillThis = cur.some(function (u) { return u.toLowerCase() === String(user).toLowerCase(); });
-        var url = stillThis ? buildUrl(null, false) : buildUrl(user, true);
-        if (!url) { KitUI.setOuStatus('不在话题页，无法筛选', 2500); KitUI.setOuDot('err'); return; }
-        KitUI.setOuStatus(stillThis ? '已还原：显示全部楼层' : ('只看 ' + user + '，正在切换…'), 2600);
-        navigate(url);
+        var mode = stillThis ? clearUserFilter() : applyUserFilter(user);
+        if (!mode) { KitUI.setOuStatus('不在话题页，无法筛选', 2500); KitUI.setOuDot('err'); return; }
+        KitUI.setOuStatus(stillThis ? '已还原：显示全部楼层' : ('只看 ' + user + '，已套用官方筛选'), 2600);
       }, true);
       return a;
     }
@@ -3787,17 +3866,16 @@
         KitUI.setOuDot('pause');
         return false;
       }
-      var url = buildUrl(null, false);
-      if (!url) { KitUI.setOuStatus('不在话题页，无法还原', 2500); KitUI.setOuDot('err'); return false; }
-      KitUI.setOuStatus('正在还原：显示全部楼层…', 2600);
-      navigate(url);
+      var mode = clearUserFilter();
+      if (!mode) { KitUI.setOuStatus('不在话题页，无法还原', 2500); KitUI.setOuDot('err'); return false; }
+      KitUI.setOuStatus('已还原：显示全部楼层', 2600);
       return true;
     };
   }
   // ---------- 测试/调试出口（无副作用） ----------
   try {
     window.__LDB64__ = {
-      version: '2.7.0',                        // 与脚本头 @version 保持同步（供调试与自检读取）
+      version: '2.7.1',                        // 与脚本头 @version 保持同步（供调试与自检读取）
       flags: FLAGS,
       CFG: CFG,
       MANUAL: MANUAL,

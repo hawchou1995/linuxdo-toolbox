@@ -7,7 +7,6 @@
   body { font: 13px/1.6 ui-monospace, Consolas, monospace; margin: 16px; max-width: 1100px; color: #222; }
   h1 { font-size: 15px; }
   #report { white-space: pre-wrap; padding: 10px 12px; border: 1px solid #ddd; border-radius: 8px; background: #fafafa; }
-  .ok { color: #1a7f37; } .bad { color: #c62828; }
   #mock-topic { margin-top: 18px; border-top: 1px dashed #ccc; padding-top: 12px; }
   .topic-post { border-bottom: 1px solid #eee; padding: 8px 0; }
   .topic-avatar { float: left; margin-right: 10px; }
@@ -101,8 +100,6 @@
     return null;
   }
   function btnOf(user) { var p = postBy(user); return p ? p.querySelector('.ldkit-onlyuser') : null; }
-  function nav() { return window.__NAV__ && window.__NAV__[window.__NAV__.length - 1]; }
-  function navUrl() { try { return new URL(nav(), location.origin); } catch (e) { return null; } }
 
   function finish() {
     var pass = R.filter(function (x) { return x.ok; }).length;
@@ -127,14 +124,35 @@
     } catch (e) { /* ignore */ }
   }
 
-  // ---- 拦截站内路由：点击按钮时记录目标 URL，不做真实跳转（真机上是 SPA 平滑切换）----
-  window.__NAV__ = [];
-  window.require = function (m) {
-    if (m === 'discourse/lib/url') {
-      return { default: { routeTo: function (url) { window.__NAV__.push(url); } } };
-    }
-    return undefined;
+  // ---- 假 Discourse 上下文：container → controller:topic → model.postStream ----
+  // 真机上这一串拿到的就是官方点击头像时用的那份 postStream，所以这里按同一形状 mock。
+  var OU = { filterCalls: [], cancelCalls: [], refreshes: 0 };
+  var mockPostStream = {
+    userFilters: [],
+    streamFilters: {},
+    get: function (k) { return this[k]; },
+    filterParticipant: function (u) { OU.filterCalls.push(u); this.userFilters = [u]; this.streamFilters = { username_filters: u }; },
+    cancelFilter: function () { OU.cancelCalls.push(1); this.userFilters = []; this.streamFilters = {}; },
+    refresh: function () { OU.refreshes++; }
   };
+  function installDiscourseStub(withContainer) {
+    window.require = function (m) {
+      if (m !== 'discourse/lib/url') return undefined;
+      if (!withContainer) return { default: {} };
+      return {
+        default: {
+          container: {
+            lookup: function (name) {
+              if (name !== 'controller:topic') return undefined;
+              return { get: function (k) { return k === 'model.postStream' ? mockPostStream : undefined; } };
+            }
+          }
+        }
+      };
+    };
+  }
+  installDiscourseStub(true);
+  window.__OU = OU;
 
   function inject() {
     return fetch('/linuxdo-toolbox.user.js', { cache: 'no-store' })
@@ -146,13 +164,10 @@
       });
   }
 
-  inject().then(function () {
-    return sleep(120);
-  }).then(async function () {
+  inject().then(function () { return sleep(150); }).then(async function () {
     if (scenarioOff) {
-      // ② 开关关闭：一个按钮都不该插
-      await sleep(400);
-      ok('⑥c 开关关闭（onlyUser=false）时不插入任何按钮', all('.ldkit-onlyuser').length === 0,
+      await sleep(500);
+      ok('⑨ 开关关闭（onlyUser=false）时不插入任何按钮', all('.ldkit-onlyuser').length === 0,
         'buttons=' + all('.ldkit-onlyuser').length);
       finish();
       return;
@@ -161,10 +176,10 @@
     var posts = all('.topic-post');
     var K = window.__LDB64__ && window.__LDB64__.readBoost;
 
-    // ① 每层楼都有按钮，且落在用户名行之后、时间行之前
+    // ① 位置
     ok('① 每层楼都长出「只看此人」按钮', posts.length === 5 && posts.every(function (p) { return !!p.querySelector('.ldkit-onlyuser'); }),
       'topic-post=' + posts.length + ' buttons=' + all('.ldkit-onlyuser').length);
-    ok('①b 按钮位于 .names 之后、.post-infos 之前（与官方入口同一视觉位置）', posts.every(function (p) {
+    ok('①b 按钮位于 .names 之后、.post-infos 之前', posts.every(function (p) {
       var md = p.querySelector('.topic-meta-data');
       if (!md) return false;
       var kids = Array.prototype.slice.call(md.children);
@@ -174,25 +189,36 @@
       return iB > iN && (iI === -1 || iB < iI);
     }));
 
-    // ⑤ 单帖用户照样有按钮（官方 enoughPostsForFiltering: topicPostCount >= 2 的缺口）
-    ok('⑤ 本话题只发过 1 帖的 solo_user 也有按钮（官方入口在他身上不出现）', !!btnOf('solo_user'));
+    // ② 单帖用户（官方入口的缺口）
+    ok('② 本话题只发过 1 帖的 solo_user 也有按钮', !!btnOf('solo_user'));
 
-    // ③ 点击生成 URL：路径正确 + 带上 username_filters + 保留既有 query（page=2）
-    window.__NAV__.length = 0;
+    // ③ 点击 → 调官方 filterParticipant（SPA），不整页跳
+    OU.filterCalls.length = 0;
     var ba = btnOf('alice');
     if (ba) ba.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-    var u = navUrl();
-    ok('③ 点击 alice 的按钮 → /t/<slug>/<id> + username_filters=alice 且保留 page',
-      !!u && u.pathname === '/t/xxx/2998304' && u.searchParams.get('username_filters') === 'alice' && u.searchParams.get('page') === '2',
-      nav());
+    ok('③ 点击「只看此人」→ 调官方的 postStream.filterParticipant(用户名)', OU.filterCalls.length === 1 && OU.filterCalls[0] === 'alice',
+      JSON.stringify(OU.filterCalls));
+    ok('③b 走 SPA（没有整页跳转），且出口记录 mode=spa',
+      !!(K && K.ouLastAction && K.ouLastAction.mode === 'spa' && K.ouLastAction.user === 'alice'),
+      K && K.ouLastAction ? JSON.stringify(K.ouLastAction) : 'n/a');
 
-    // ③b 纯函数出口（供外部断言 URL 构造）
-    ok('③b KitUI.buildOnlyUserUrl 纯函数可用', !!K && typeof K.buildOnlyUserUrl === 'function'
+    // ④ 退化路径的判据（只读决策出口，不真跳）
+    ok('④ KitUI.ouPlan：有官方上下文 → spa', !!(K && K.ouPlan && K.ouPlan('bob').mode === 'spa'),
+      K && K.ouPlan ? JSON.stringify(K.ouPlan('bob')) : 'n/a');
+    installDiscourseStub(false);
+    var plan = K && K.ouPlan ? K.ouPlan('bob') : null;
+    ok('④b KitUI.ouPlan：拿不到容器 → 退化为整页跳且 URL 正确',
+      !!plan && plan.mode === 'load' && plan.url === '/t/xxx/2998304?page=2&username_filters=bob',
+      plan ? JSON.stringify(plan) : 'n/a');
+    installDiscourseStub(true);
+
+    // ④c URL 纯函数出口
+    ok('④c KitUI.buildOnlyUserUrl 纯函数可用', !!K && typeof K.buildOnlyUserUrl === 'function'
       && K.buildOnlyUserUrl('bob', true) === '/t/xxx/2998304?page=2&username_filters=bob'
       && K.buildOnlyUserUrl(null, false) === '/t/xxx/2998304?page=2',
       K && typeof K.buildOnlyUserUrl === 'function' ? (K.buildOnlyUserUrl('bob', true) + ' | ' + K.buildOnlyUserUrl(null, false)) : 'n/a');
 
-    // ② 新楼层即时补按钮、旧楼层不重复插入
+    // ⑤ 新楼层即时补按钮、不重复
     var before = all('.ldkit-onlyuser').length;
     var extra = document.createElement('div');
     extra.className = 'topic-post clearfix';
@@ -204,42 +230,44 @@
       '<div class="post-infos"><span class="relative-date">刚刚</span></div>' +
       '</div><div class="cooked">新来的。</div></div></article>';
     document.getElementById('mock-topic').appendChild(extra);
-    await sleep(200);
-    ok('② 新增楼层被即时补上按钮', all('.ldkit-onlyuser').length === before + 1,
-      before + ' -> ' + all('.ldkit-onlyuser').length);
-    ok('②b 同一层不会被重复插入按钮', all('.topic-post').every(function (p) { return p.querySelectorAll('.ldkit-onlyuser').length <= 1; }));
+    await sleep(250);
+    ok('⑤ 新增楼层被即时补上按钮', all('.ldkit-onlyuser').length === before + 1, before + ' -> ' + all('.ldkit-onlyuser').length);
+    ok('⑤b 同一层不会被重复插入按钮', all('.topic-post').every(function (p) { return p.querySelectorAll('.ldkit-onlyuser').length <= 1; }));
 
-    // ④ 已筛选态：按钮变「显示全部」，点它去掉 username_filters
-    history.pushState({}, '', '/t/xxx/2998304?username_filters=alice');
+    // ⑥ 已筛选态：按钮变「显示全部」，点它调官方 cancelFilter
+    history.pushState({}, '', '/t/xxx/2998304?page=2&reflow=1');   // 触发模块重排按钮（它按 href 变化重建）
     await sleep(1900);
     var b2 = btnOf('alice');
-    ok('④ 已筛选时该用户的按钮变为高亮的「显示全部」', !!b2 && b2.classList.contains('on') && /显示全部/.test(b2.textContent));
-    window.__NAV__.length = 0;
+    ok('⑥ 已筛选时该用户的按钮变为高亮的「显示全部」', !!b2 && b2.classList.contains('on') && /显示全部/.test(b2.textContent),
+      b2 ? (b2.className + ' / ' + b2.textContent.trim()) : 'n/a');
+    OU.cancelCalls.length = 0;
     if (b2) b2.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-    var u2 = navUrl();
-    ok('④b 点击后去掉 username_filters（还原为看全部楼层）', !!u2 && u2.searchParams.get('username_filters') === null, nav());
+    ok('⑥b 点「显示全部」→ 调官方的 postStream.cancelFilter()', OU.cancelCalls.length === 1 && OU.refreshes >= 1,
+      'cancel=' + OU.cancelCalls.length + ' refresh=' + OU.refreshes);
 
-    // ④c 子看板上的「显示全部」按钮（面板 → KitUI.ouClear）
+    // ⑥c 子看板上的「显示全部」走同一条路
+    mockPostStream.userFilters = ['bob'];              // 造一个「正在筛选」的态
+    OU.cancelCalls.length = 0;
     var cleared = K && typeof K.ouClear === 'function' ? K.ouClear() : null;
-    var u3 = navUrl();
-    ok('④c 面板「显示全部」经 KitUI.ouClear 去掉筛选', !!u3 && u3.searchParams.get('username_filters') === null, nav());
+    ok('⑥c 面板「显示全部」经 KitUI.ouClear → 调 cancelFilter', cleared === true && OU.cancelCalls.length === 1,
+      'ret=' + cleared + ' cancel=' + OU.cancelCalls.length);
 
-    // ⑥ 非话题页不插按钮；回到话题页恢复
+    // ⑦ 非话题页不插按钮；回到话题页恢复
     history.pushState({}, '', '/latest');
     await sleep(1900);
-    ok('⑥ 离开话题页（/latest）后按钮全部清除', all('.ldkit-onlyuser').length === 0, 'buttons=' + all('.ldkit-onlyuser').length);
+    ok('⑦ 离开话题页（/latest）后按钮全部清除', all('.ldkit-onlyuser').length === 0, 'buttons=' + all('.ldkit-onlyuser').length);
     history.pushState({}, '', '/t/xxx/2998304?page=2');
     await sleep(1900);
-    ok('⑥b 回到话题页后按钮恢复', all('.ldkit-onlyuser').length > 0, 'buttons=' + all('.ldkit-onlyuser').length);
+    ok('⑦b 回到话题页后按钮恢复', all('.ldkit-onlyuser').length > 0, 'buttons=' + all('.ldkit-onlyuser').length);
 
-    // ⑦ 三个参数生效（位置 / 文字 / 悬停）
+    // ⑧ 三个参数生效（位置 / 文字 / 悬停）
     K.paramHooks.onlyUser({ anchor: 'avatar', showText: true, hoverOnly: true });
-    await sleep(200);
+    await sleep(250);
     var pb = postBy('bob');
     var bb = pb ? pb.querySelector('.ldkit-onlyuser') : null;
-    ok('⑦ anchor=avatar：按钮移到头像下方', !!pb && !!pb.querySelector('.topic-avatar .post-avatar > .ldkit-onlyuser'));
-    ok('⑦b showText=true：显示「只看此人」字样', !!bb && /只看此人/.test(bb.textContent) && !/display:\s*none/.test(bb.querySelector('.ou-txt').getAttribute('style') || ''));
-    ok('⑦c hoverOnly=true：按钮带上 hover-only 类（默认隐藏、悬停显示）', !!bb && bb.classList.contains('hover-only'));
+    ok('⑧ anchor=avatar：按钮移到头像下方', !!pb && !!pb.querySelector('.topic-avatar .post-avatar > .ldkit-onlyuser'));
+    ok('⑧b showText=true：显示「只看此人」字样', !!bb && /只看此人/.test(bb.textContent) && !/display:\s*none/.test(bb.querySelector('.ou-txt').getAttribute('style') || ''));
+    ok('⑧c hoverOnly=true：按钮带上 hover-only 类', !!bb && bb.classList.contains('hover-only'));
 
     finish();
   }).catch(function (e) {

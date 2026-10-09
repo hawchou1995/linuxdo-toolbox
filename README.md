@@ -22,13 +22,15 @@
 官方那个入口藏在用户卡片里，而且**只在 `topicPostCount >= 2` 时才出现**（源码里 `enoughPostsForFiltering` 写死的）——
 也就是说，**在本话题里只发过一条帖子的用户，官方根本点不出筛选**。
 
-本功能直接生成并在站内跳转 `/t/<slug>/<id>?username_filters=<用户名>`。
-这条 query 正是官方的服务端筛选参数（路由侧 `routes/topic.js` 的 `queryParams.username_filters`，
-模型侧 `post-stream.js` 的 `streamFilters.username_filters`），所以：
+本功能**直接调官方那条动作**：从 `container` 取 `controller:topic` 的 `model.postStream`，
+执行 `postStream.filterParticipant(username)` —— 这正是「点用户卡片 → 点话题中的 N 个帖子」
+在调的同一个函数（`models/post-stream.js`），所以：
 
 - 结果与官方入口**完全一致** —— 只列该用户的帖子、**楼主帖恒定保留在首位**，还带原生的「显示全部」提示条；
 - **不受「≥ 2 帖」限制** —— 单帖用户照样给按钮、照样能筛；
-- 筛选后**仍停在话题页**，点原生提示条或子看板里的「显示全部」即还原。
+- 与官方**同一个动作**：SPA 内即时生效（不整页刷新），点「显示全部」走官方 `cancelFilter` 还原；
+- 万一拿不到容器 / 模型（别的 Discourse 版本），退化成整页跳 `/t/<slug>/<id>?username_filters=<用户名>` ——
+  这条 query 同样是官方的服务端筛选参数（`routes/topic.js` 的 `queryParams`），结果等价；
 
 三个参数可调：按钮位置（用户名右侧 / 头像下方）、是否显示「只看TA」字样、是否悬停才显示。改动即时生效，不用刷新。
 
@@ -50,7 +52,7 @@
 
 ```
 linuxdo-toolbox.user.js      # 单文件用户脚本（就是它本体，直接可装）
-scripts/selfcheck.html       # ⑦「只看此人」离线自检页：mock 话题 DOM + 注入脚本 + 16 项断言
+scripts/selfcheck.html       # ⑦「只看此人」离线自检页：mock 话题 DOM + 假 Discourse 容器 + 19 项断言
 scripts/run-selfcheck.cjs    # 自检执行器：起本地静态服务 + 真实 Chromium 跑两个场景
 ```
 
@@ -58,11 +60,12 @@ scripts/run-selfcheck.cjs    # 自检执行器：起本地静态服务 + 真实 
 
 ```bash
 node scripts/run-selfcheck.cjs
-# → 合计：16 / 16 项通过 ；RESULT: PASS
+# → 合计：19 / 19 项通过 ；RESULT: PASS
 ```
 
-自检覆盖：按钮位置、点击生成的筛选 URL（含保留既有 query）、**单帖用户也有按钮**、重复扫描去重、
-已筛选态变「显示全部」、面板「显示全部」出口、离开话题页清除、三个参数生效、开关关闭时不插。
+自检覆盖：按钮位置、**点击调官方 `postStream.filterParticipant`（不整页跳）**、拿不到容器时退化为
+`?username_filters=` 整页跳、**单帖用户也有按钮**、重复扫描去重、已筛选态变「显示全部」并调官方
+`cancelFilter`、面板「显示全部」出口、离开话题页清除、三个参数生效、开关关闭时不插。
 
 ## 开源与社区
 
