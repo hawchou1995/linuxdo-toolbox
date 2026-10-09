@@ -11,10 +11,10 @@
 // @run-at       document-start
 // @noframes
 // @license      MIT
-// @downloadURL https://update.greasyfork.org/scripts/596713/LINUX%20DO%20%E5%B7%A5%E5%85%B7%E7%AE%B1.user.js
-// @updateURL https://update.greasyfork.org/scripts/596713/LINUX%20DO%20%E5%B7%A5%E5%85%B7%E7%AE%B1.meta.js
 // @homepageURL  https://github.com/hawchou1995/linuxdo-toolbox
 // @supportURL   https://qingju.me/
+// @downloadURL https://update.greasyfork.org/scripts/596713/LINUX%20DO%20%E5%B7%A5%E5%85%B7%E7%AE%B1.user.js
+// @updateURL https://update.greasyfork.org/scripts/596713/LINUX%20DO%20%E5%B7%A5%E5%85%B7%E7%AE%B1.meta.js
 // ==/UserScript==
 
 /*
