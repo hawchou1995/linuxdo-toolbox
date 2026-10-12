@@ -269,6 +269,57 @@
     ok('⑧b showText=true：显示「只看此人」字样', !!bb && /只看此人/.test(bb.textContent) && !/display:\s*none/.test(bb.querySelector('.ou-txt').getAttribute('style') || ''));
     ok('⑧c hoverOnly=true：按钮带上 hover-only 类', !!bb && bb.classList.contains('hover-only'));
 
+    // ⑨ 「密文自解」的反向能力：主动加码（明文 → Base64）—— 走真面板的 shadow DOM
+    const hostEl = document.getElementById('ldb64-manual-host');
+    const sh = hostEl && hostEl.shadowRoot;
+    ok('⑨ 手动面板已挂载（shadow root 可取）', !!sh);
+    if (sh) {
+      const modeEnc = sh.querySelector('[data-act="mode-enc"]');
+      const modeDec = sh.querySelector('[data-act="mode-dec"]');
+      const goBtn = sh.querySelector('[data-act="decode"]');
+      const taEl = sh.querySelector('.ta');
+      const outEl = sh.querySelector('.out');
+      const bodyOf = function () { const s = outEl.querySelector('.seg-body'); return s ? s.textContent : ''; };
+      const run = async function (text) {
+        taEl.value = text;
+        taEl.dispatchEvent(new Event('input', { bubbles: true }));
+        await sleep(420);
+        return bodyOf();
+      };
+
+      modeEnc.click();
+      ok('⑨b 切到加码方向：两个方向按钮的 aria-pressed 与 Go 按钮文案都对',
+        modeEnc.getAttribute('aria-pressed') === 'true' && modeDec.getAttribute('aria-pressed') === 'false' && goBtn.textContent === '加密',
+        modeEnc.getAttribute('aria-pressed') + '/' + modeDec.getAttribute('aria-pressed') + '/' + goBtn.textContent);
+
+      const PLAIN = '你好，LINUX DO 🎉\n第二行：https://linux.do/t/2998304';
+      const enc1 = await run(PLAIN);
+      ok('⑨c 明文 → 密文：产出纯 Base64 字母表（中文/emoji 没把编码器搞挂）',
+        enc1.length > 0 && /^[A-Za-z0-9+/=\n]+$/.test(enc1) && enc1.indexOf('你好') < 0, enc1.slice(0, 60));
+      ok('⑨d 输出块自带「复制」按钮', !!outEl.querySelector('.seg-hd .mini'));
+
+      modeDec.click();
+      const dec1 = await run(enc1.replace(/\s+/g, ''));
+      ok('⑨e 往返一致：编出来的密文解回来 === 原明文（含中文 / emoji / 换行）', dec1 === PLAIN, JSON.stringify(dec1.slice(0, 70)));
+
+      // 参数：URL 安全字母表 + 每行 8 字符折行 + 2 层加码
+      window.__LDB64__.saveParams('b64', { encUrlSafe: true, encWrap: 8, encRounds: 2 });
+      modeEnc.click();
+      const enc2 = await run('ABCDEF1234567890');
+      ok('⑨f URL 安全字母表：输出不含 + / =', !/[+/=]/.test(enc2), enc2.slice(0, 60));
+      ok('⑨g 按行折行：每行不超过 8 字符且确有换行',
+        enc2.indexOf('\n') >= 0 && enc2.split('\n').every(function (l) { return l.length <= 8; }), JSON.stringify(enc2));
+      const tag2 = outEl.querySelector('.seg-tag');
+      ok('⑨h 加码层数=2：标签写明「连续加码 2 层」', !!tag2 && /连续加码 2 层/.test(tag2.textContent), tag2 ? tag2.textContent : 'n/a');
+
+      modeDec.click();
+      const dec2 = await run(enc2.replace(/\s+/g, ''));
+      ok('⑨i 两层 + URL 安全 + 折行的输出：解回来仍是原明文', dec2 === 'ABCDEF1234567890', JSON.stringify(dec2.slice(0, 60)));
+
+      window.__LDB64__.resetParams('b64');
+      modeEnc.click();
+    }
+
     finish();
   }).catch(function (e) {
     ok('自检脚本本身异常', false, String((e && e.message) || e));

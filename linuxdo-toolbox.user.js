@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LINUX DO 工具箱
 // @namespace    https://linux.do/
-// @version      2.7.1
-// @description  LINUX DO 工具箱：七个功能在右下角面板各自独立开关，名字一律四个汉字 —— ① 密文自解（正文 Base64 就地解码，含手动解码面板）② 原生复制（取 /raw/ 原生 Markdown 并附转载来源）③ 外链解锁（外链免登录可见，强制新标签页）④ 随读回应（跟随阅读随机回应，跳过爱心与 +1）⑤ 已读提速（批量同步已读帖数与阅读时长）⑥ 过盾重试（盾验证失败时自动跳回盾页重试）⑦ 只看此人（每层楼用户名旁一键只看该用户的帖子，跳过点头像两步，只发过 1 帖的用户也能筛）。面板两级导航：主看板一行一个功能，点进去是它自己的子看板；所有看板宽高统一，切换不跳动；底部另有「一键全默认」。仓库 github.com/hawchou1995/linuxdo-toolbox · 论坛 qingju.me
+// @version      2.8.0
+// @description  LINUX DO 工具箱：七个功能在右下角面板各自独立开关，名字一律四个汉字 —— ① 密文自解（正文 Base64 就地解码；手动面板支持反向「主动加码」：明文 → Base64）② 原生复制（取 /raw/ 原生 Markdown 并附转载来源）③ 外链解锁（外链免登录可见，强制新标签页）④ 随读回应（跟随阅读随机回应，跳过爱心与 +1）⑤ 已读提速（批量同步已读帖数与阅读时长）⑥ 过盾重试（盾验证失败时自动跳回盾页重试）⑦ 只看此人（每层楼用户名旁一键只看该用户的帖子，跳过点头像两步，只发过 1 帖的用户也能筛）。面板两级导航：主看板一行一个功能，点进去是它自己的子看板；所有看板宽高统一，切换不跳动；底部另有「一键全默认」。仓库 github.com/hawchou1995/linuxdo-toolbox · 论坛 qingju.me
 // @author       牛来 · XAUTHUB · HawChow · Sunwuyuan · adodo · Pipecraft
 // @match        https://linux.do/*
 // @match        https://qingju.me/*
@@ -18,6 +18,19 @@
 // ==/UserScript==
 
 /*
+ * v2.8.0 —— 「密文自解」加反向能力：「主动加码」（明文 → Base64）：
+ *          ① 「密文自解」子看板顶部多了一个方向开关：「密文 → 明文」（原来的解码）／
+ *             「明文 → 密文」（新增的加码）。切过去就是把输入当明文、产出 Base64 密文；
+ *             已经输入的内容会按新方向立刻重算，不用重打。
+ *          ② 加码可调四件事（参数区）：「加码层数」1~4 层（多轮 = 把上一轮结果再编一次）、
+ *             「URL 安全字符」（用 -_ 且不带 = ）、「每行字符数」（0 = 不折行，方便直接贴进帖子）、
+ *             「保留换行与空格」。改动即时生效。
+ *          ③ 编码器自己查表，不用 btoa —— btoa 只吃 Latin-1，中文 / emoji 会直接抛
+ *             InvalidCharacterError；这里是先 UTF-8 编码再查表，中文、emoji、换行都不丢。
+ *          ④ 输出沿用解码侧那套渲染（右上角一键「复制」）；「示例」按钮在加码方向下给的是
+ *             明文样例；子看板下半段的标题从「解码」改成「互转」。
+ *          ⑤ 与解码侧同源往返：解出来的明文能编回去、编出来的密文能解回来，两边一致
+ *             （离线自检里有专门的往返断言）。
  * v2.7.1 —— 修「只看此人」点了没反应（v2.7.0 的点击是坏的，这里修好并换成官方动作）：
  *          ① 症状：v2.7.0 里点「只看此人」什么都不发生 —— 不跳转、不筛选、控制台也没报错。
  *          ② 根因（真机实测）：点击处理里先 preventDefault 挡住了 <a> 的原生跳转，再调
@@ -246,7 +259,7 @@
   // ================================================================
   const FLAGS_KEY = 'ldkit.flags.v1';
   const FLAG_DEFS = [
-    { id: 'b64', label: '密文自解', hint: '自动识别帖子正文里的 Base64 并就地解码显示（含手动解码面板）' },
+    { id: 'b64', label: '密文自解', hint: '自动识别帖子正文里的 Base64 并就地解码；手动面板支持双向互转：密文 → 明文 / 明文 → 密文（主动加码）' },
     { id: 'mdCopy', label: '原生复制', hint: '在每层楼的操作栏加一个按钮，取 /raw/ 原生 Markdown 并附转载来源' },
     { id: 'linkUnlock', label: '外链解锁', hint: '破解 External Link Shield：外链免登录可见，点击强制新标签页且不弹提示' },
     { id: 'autoReact', label: '随读回应', hint: '只对当前可见且未回应的楼层随机回应（跳过爱心与 +1）' },
@@ -268,7 +281,11 @@
       { key: 'minLen', label: '候选最短', type: 'number', min: 4, max: 512, step: 1, def: 16 },
       { key: 'minDecoded', label: '结果最短', type: 'number', min: 1, max: 512, step: 1, def: 5 },
       { key: 'maxRounds', label: '解码轮数', type: 'number', min: 1, max: 6, step: 1, def: 2 },
-      { key: 'debounceMs', label: '输入延迟ms', type: 'number', min: 0, max: 3000, step: 10, def: 180 }
+      { key: 'debounceMs', label: '输入延迟ms', type: 'number', min: 0, max: 3000, step: 10, def: 180 },
+      { key: 'encRounds', label: '加码层数', type: 'number', min: 1, max: 4, step: 1, def: 1 },
+      { key: 'encUrlSafe', label: 'URL 安全字符', type: 'bool', def: false },
+      { key: 'encWrap', label: '每行字符数(0=不折行)', type: 'number', min: 0, max: 120, step: 4, def: 0 },
+      { key: 'encKeepWs', label: '保留换行与空格', type: 'bool', def: true }
     ],
     mdCopy: [
       { key: 'appendSource', label: '附转载来源', type: 'bool', def: true },
@@ -547,6 +564,16 @@
     prefKey: 'ldb64.pref'
   };
 
+
+  // ---- 「主动加码」（明文 → Base64）的运行时配置（面板参数可调）----
+  //   与解码侧完全镜像：多轮、URL 安全字母表、按行折行。
+  const ENC = {
+    rounds: 1,            // 加码层数（多轮 = 把上一轮的结果再编一次）
+    urlSafe: false,       // URL 安全字母表（-_ 且不带 =）
+    wrap: 0,              // 每行字符数，0 = 不折行
+    keepWhitespace: true  // 保留原样换行与空格（false = 编码前先合并掉所有空白）
+  };
+  // 面板参数 → 本模块运行时配置（启动时调一次；「保存参数 / 恢复默认」时再调）
   // 面板参数 → 本模块运行时配置（启动时调一次；「保存参数 / 恢复默认」时再调）
   function applyB64Params(p) {
     if (!p) return;
@@ -554,9 +581,18 @@
     if (typeof p.minDecoded === 'number' && p.minDecoded >= 1) CFG.minDecoded = Math.floor(p.minDecoded);
     if (typeof p.maxRounds === 'number' && p.maxRounds >= 1) CFG.maxRounds = Math.floor(p.maxRounds);
     if (typeof p.debounceMs === 'number' && p.debounceMs >= 0) CFG.debounceMs = Math.floor(p.debounceMs);
+    // 「主动加码」侧
+    if (typeof p.encRounds === 'number') ENC.rounds = Math.max(1, Math.min(4, Math.floor(p.encRounds) || 1));
+    ENC.urlSafe = !!p.encUrlSafe;
+    if (typeof p.encWrap === 'number' && p.encWrap >= 0) ENC.wrap = Math.floor(p.encWrap);
+    ENC.keepWhitespace = p.encKeepWs !== false;
   }
   applyB64Params(getParams('b64'));
-  KitUI.paramHooks.b64 = applyB64Params;
+  // 参数改动 → 先套用，再让面板按当前方向立刻重算（b64Rerun 由面板挂载时注册）
+  KitUI.paramHooks.b64 = function (p) {
+    applyB64Params(p);
+    if (KitUI.b64Rerun) { try { KitUI.b64Rerun(); } catch (e) { /* ignore */ } }
+  };
 
   // ---- 手动解码面板相关配置 ----
   const MANUAL = {
@@ -564,7 +600,8 @@
     minDecoded: 1,       // 手动模式：结果不设长度下限（用户明确知道自己在解什么）
     deepMinLen: 8,       // 继续下钻的最短长度：低于此值视为已到最终明文，不再二次解码
     segMinLen: 8,        // 分段尝试的最短长度（避免把正文里的短词误当成 base64 片段）
-    maxRounds: 3         // 多轮下钻（二次/三次编码）
+    maxRounds: 3,        // 多轮下钻（二次/三次编码）
+    mode: 'dec'          // 手动面板方向：'dec' 密文→明文 / 'enc' 明文→密文（面板上可切）
   };
   const UI_HOST_ID = 'ldb64-manual-host';
   const UI_POS_KEY = 'ldb64.panel.pos';
@@ -1053,6 +1090,83 @@
     return { ok: false, reason: 'not-b64' };
   }
 
+  // ---------- 编码核心：明文 → Base64（面板上的「主动加码」）----------
+  //   与解码镜像：同样支持多轮（把上一轮结果再编一次）、URL 安全字母表、按行折行。
+  //   自己查表，不用 btoa —— btoa 只吃 Latin-1，中文 / emoji 会直接抛 InvalidCharacterError。
+  const B64_AB = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+  // 文本 → UTF-8 字节（TextEncoder 优先，老环境走手写兜底）
+  function utf8Bytes(str) {
+    const s = String(str == null ? '' : str);
+    if (typeof TextEncoder === 'function') return new TextEncoder().encode(s);
+    const out = [];
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c < 0x80) { out.push(c); continue; }
+      if (c < 0x800) { out.push(0xC0 | (c >> 6), 0x80 | (c & 63)); continue; }
+      if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.length) {
+        const c2 = s.charCodeAt(++i);
+        const cp = 0x10000 + ((c - 0xD800) << 10) + (c2 - 0xDC00);
+        out.push(0xF0 | (cp >> 18), 0x80 | ((cp >> 12) & 63), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
+        continue;
+      }
+      out.push(0xE0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    }
+    return Uint8Array.from(out);
+  }
+
+  // 字节 → Base64（urlSafe 时用 -_ 且不补 =）
+  function bytesToB64(bytes, urlSafe, pad) {
+    let out = '';
+    for (let i = 0; i < bytes.length; i += 3) {
+      const b0 = bytes[i];
+      const b1 = i + 1 < bytes.length ? bytes[i + 1] : -1;
+      const b2 = i + 2 < bytes.length ? bytes[i + 2] : -1;
+      out += B64_AB[b0 >> 2];
+      out += B64_AB[((b0 & 3) << 4) | ((b1 < 0 ? 0 : b1) >> 4)];
+      if (b1 < 0) { if (pad) out += '=='; continue; }
+      out += B64_AB[((b1 & 15) << 2) | ((b2 < 0 ? 0 : b2) >> 6)];
+      if (b2 < 0) { if (pad) out += '='; continue; }
+      out += B64_AB[b2 & 63];
+    }
+    if (urlSafe) out = out.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    return out;
+  }
+
+  // 每行 n 个字符折行（0 或 n < 8 = 不折行）
+  function wrapLines(str, n) {
+    if (!n || n < 8 || str.length <= n) return str;
+    const parts = [];
+    for (let i = 0; i < str.length; i += n) parts.push(str.slice(i, i + n));
+    return parts.join('\n');
+  }
+
+  // 对外主入口：明文 → 密文（返回形状与 decodeManualInput 对齐，面板共用同一套渲染）
+  function encodeManualInput(raw) {
+    let text = String(raw == null ? '' : raw);
+    if (!text) return { ok: false, reason: 'empty' };
+    if (!ENC.keepWhitespace) text = text.replace(WS_RE, '');
+    if (!text) return { ok: false, reason: 'empty' };
+
+    const rounds = Math.max(1, Math.min(4, Math.floor(ENC.rounds) || 1));
+    const plainBytes = utf8Bytes(text).length;
+    let cur = text;
+    for (let i = 0; i < rounds; i++) cur = bytesToB64(utf8Bytes(cur), ENC.urlSafe, !ENC.urlSafe);
+    const out = wrapLines(cur, ENC.wrap);      // 折行与字母表无关：URL 安全串同样可以折行（解码侧会把空白剥掉）
+
+    return {
+      ok: true,
+      plainBytes: plainBytes,
+      plainChars: text.length,
+      segments: [{
+        label: '明文 → Base64' + (rounds > 1 ? '（连续加码 ' + rounds + ' 层）' : ''),
+        text: out,
+        rounds: 1,
+        lossy: false
+      }]
+    };
+  }
+
   // ---------- 手动解码：悬浮面板 UI（Shadow DOM 隔离，避免被站点主题污染） ----------
   function mountPanel() {
     if (!document.body) return;
@@ -1199,6 +1313,10 @@
       '.mini.active { border-color: var(--ok); color: var(--ok); }',
       '.pad { padding: 8px 12px 11px; display: flex; flex-direction: column; gap: 8px; }',
       '.row-btns { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }',
+      '.mode-sw { display: flex; border: 1px solid var(--field-line); border-radius: 8px; overflow: hidden; margin: 0 0 7px; }',
+      '.mode-sw .mode-btn { flex: 1; border: 0; background: var(--field); color: var(--fg-2); font: inherit; font-size: 11px; padding: 4px 6px; cursor: pointer; }',
+      '.mode-sw .mode-btn + .mode-btn { border-left: 1px solid var(--field-line); }',
+      '.mode-sw .mode-btn[aria-pressed="true"] { background: var(--btn); color: var(--btn-fg); }',
       '.mini, .go {',
       '  appearance: none; font: inherit; font-size: 12px; line-height: 1.3; cursor: pointer;',
       '  border-radius: 7px; padding: 4px 10px; border: 1px solid var(--btn-2-line);',
@@ -1411,6 +1529,26 @@
     }
 
     // ---- 结果渲染 ----
+    // ---- 方向切换：「密文 → 明文」（自解）/「明文 → 密文」（主动加码）----
+    function setMode(m) {
+      MANUAL.mode = (m === 'enc') ? 'enc' : 'dec';
+      const enc = MANUAL.mode === 'enc';
+      root.querySelectorAll('[data-act^="mode-"]').forEach(function (b) {
+        b.setAttribute('aria-pressed', String((b.getAttribute('data-act') === 'mode-enc') === enc));
+      });
+      const go = root.querySelector('[data-act="decode"]');
+      if (go) go.textContent = enc ? '加密' : '解码';
+      const hint = root.querySelector('.b64-hint');
+      if (hint) hint.textContent = enc ? '输入即加码，Ctrl+Enter 立即' : '输入即解码，Ctrl+Enter 立即';
+      if (ta) {
+        ta.placeholder = enc
+          ? '输入要加码的明文：中文 / emoji / 换行都行，输出 Base64 密文'
+          : '粘贴 Base64：可被空格换行拆散、夹带说明文字、带引号或代码围栏';
+      }
+      if (!(ta && ta.value.trim())) { out.hidden = true; out.textContent = ''; return; }
+      runDecode();                                   // 已输入的内容按新方向立刻重算
+    }
+
     function renderResult(res) {
       out.textContent = '';
       out.hidden = false;
@@ -1418,8 +1556,10 @@
         const err = document.createElement('div');
         err.className = 'err';
         err.textContent = res.reason === 'empty'
-          ? '请输入要解码的内容。'
-          : '未能解码：这不是有效的 Base64，或解码结果不是可读文本。';
+          ? (MANUAL.mode === 'enc' ? '请输入要加码的明文。' : '请输入要解码的内容。')
+          : (MANUAL.mode === 'enc'
+            ? '加码失败：输入为空，或编码过程出了意外。'
+            : '未能解码：这不是有效的 Base64，或解码结果不是可读文本。');
         out.appendChild(err);
         return;
       }
@@ -1469,12 +1609,14 @@
       });
     }
 
+    // 一个入口两种方向：'dec' 解 Base64 → 明文；'enc' 明文 → Base64
     function runDecode() {
       if (timer) { clearTimeout(timer); timer = null; }
       const val = ta.value;
       if (!val.trim()) { out.hidden = true; out.textContent = ''; return; }
-      renderResult(decodeManualInput(val));
+      renderResult(MANUAL.mode === 'enc' ? encodeManualInput(val) : decodeManualInput(val));
     }
+    KitUI.b64Rerun = runDecode;     // 面板挂载后的出口：参数改动时按当前方向立刻重算
     function scheduleDecode() {
       if (timer) clearTimeout(timer);
       timer = setTimeout(runDecode, CFG.debounceMs);
@@ -1551,7 +1693,12 @@
       if (act === 'close') { closePanel(); }
       else if (act === 'clear') { ta.value = ''; out.hidden = true; out.textContent = ''; try { ta.focus(); } catch (err) { /* ignore */ } }
       else if (act === 'decode') { runDecode(); }
-      else if (act === 'demo') { ta.value = 'aHR0cHM6Ly9saW51eC5kby90LzI5NDc1OTQ='; runDecode(); }
+      else if (act === 'mode-dec') { setMode('dec'); }
+      else if (act === 'mode-enc') { setMode('enc'); }
+      else if (act === 'demo') {
+        ta.value = (MANUAL.mode === 'enc') ? 'https://linux.do/t/2998304' : 'aHR0cHM6Ly9saW51eC5kby90LzI5NDc1OTQ=';
+        runDecode();
+      }
       else if (act === 'paste') {
         try {
           if (navigator.clipboard && navigator.clipboard.readText) {
@@ -1578,13 +1725,17 @@
     const VIEW_HTML = {
       b64: [
         '<div class="pad">',
+        '<div class="mode-sw" role="group" aria-label="方向">',
+        '<button type="button" class="mode-btn" data-act="mode-dec" aria-pressed="true">密文 → 明文</button>',
+        '<button type="button" class="mode-btn" data-act="mode-enc" aria-pressed="false">明文 → 密文</button>',
+        '</div>',
         '<textarea class="ta" rows="4" spellcheck="false" placeholder="粘贴 Base64：可被空格换行拆散、夹带说明文字、带引号或代码围栏"></textarea>',
         '<div class="row-btns">',
         '<button type="button" class="go" data-act="decode">解码</button>',
         '<button type="button" class="mini" data-act="paste">粘贴</button>',
         '<button type="button" class="mini" data-act="demo">示例</button>',
         '<button type="button" class="mini" data-act="clear">清空</button>',
-        '<span class="hint">输入即解码，Ctrl+Enter 立即</span>',
+        '<span class="hint b64-hint">输入即解码，Ctrl+Enter 立即</span>',
         '</div>',
         '<div class="out" hidden></div>',
         '</div>'
@@ -1635,7 +1786,7 @@
       onlyUser: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.7" cy="10" r="5.2"/><path d="m14.7 14 4.3 4.3"/><path d="M8.5 10.6a2.6 2.6 0 0 1 2.5-2.3"/></svg>'
     };
     // 子面板下半段的标题：有的功能叫「进度」，有的只是「状态」
-    const SEC2 = { b64: '解码', mdCopy: '用法', linkUnlock: '说明', autoReact: '状态', readBoost: '进度', cfShield: '状态', onlyUser: '状态' };
+    const SEC2 = { b64: '互转', mdCopy: '用法', linkUnlock: '说明', autoReact: '状态', readBoost: '进度', cfShield: '状态', onlyUser: '状态' };
 
     const flagsBox = root.querySelector('#kit-flags');      // 主看板：七行清单
     const subsBox = root.querySelector('#kit-subs');        // 子看板：七个功能各自的内容
@@ -3875,7 +4026,7 @@
   // ---------- 测试/调试出口（无副作用） ----------
   try {
     window.__LDB64__ = {
-      version: '2.7.1',                        // 与脚本头 @version 保持同步（供调试与自检读取）
+      version: '2.8.0',                        // 与脚本头 @version 保持同步（供调试与自检读取）
       flags: FLAGS,
       CFG: CFG,
       MANUAL: MANUAL,
