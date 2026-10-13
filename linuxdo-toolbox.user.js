@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LINUX DO 工具箱
 // @namespace    https://linux.do/
-// @version      2.8.2
+// @version      2.8.3
 // @description  LINUX DO 工具箱：七个功能在右下角面板各自独立开关，名字一律四个汉字 —— ① 密文自解（正文 Base64 就地解码；手动面板支持反向「主动加码」：明文 → Base64）② 原生复制（取 /raw/ 原生 Markdown 并附转载来源）③ 外链解锁（外链免登录可见，强制新标签页）④ 随读回应（跟随阅读随机回应，跳过爱心与 +1）⑤ 已读提速（批量同步已读帖数与阅读时长）⑥ 过盾重试（识别 Cloudflare 挑战页，包含原页面内嵌挑战；验证完成自动恢复原页）⑦ 只看此人（每层楼用户名旁一键只看该用户的帖子，跳过点头像两步，只发过 1 帖的用户也能筛）。面板两级导航：主看板一行一个功能，点进去是它自己的子看板；所有看板宽高统一，切换不跳动；底部另有「一键全默认」。仓库 github.com/hawchow1995/linuxdo-toolbox · 论坛 qingju.me
 // @author       牛来 · XAUTHUB · HawChow · Sunwuyuan · adodo · Pipecraft
 // @match        https://linux.do/*
@@ -18,6 +18,10 @@
 // ==/UserScript==
 
 /*
+ * v2.8.3 —— 扩大 Cloudflare 原 URL 内嵌挑战的回归覆盖：
+ *          ① 离线 Chromium 覆盖 `/new`、`/latest`、`/t/...`，验证完整同源 URL（含查询参数）保留并自动确认恢复。
+ *          ② 增加验证控件零交互断言；独立 `/challenge`、跨源拒绝、冷却及重试上限继续覆盖。
+ *          ③ 本版更新版本与发布说明；Cloudflare 验证及恢复运行逻辑未变。
  * v2.8.2 —— 修「Cloudflare 挑战挂在原 URL 时状态仍显示就绪」：
  *          ① 识别 Cloudflare managed challenge 的 `window._cf_chl_opt.cRay` 标记（如 `/new` 上的 Turnstile interstitial），
  *             在 sessionStorage 记录当前同源原地址并显示等待状态，不再误判为普通页面或重复跳盾。
@@ -1401,7 +1405,7 @@
       '<button type="button" class="mini" data-cfg-reset-all="1" title="把七个功能的参数全部恢复为出厂默认值">一键全默认</button>',
       '<span class="hint">参数改动即时生效，不用刷新</span>',
       '<div class="about">',
-      '<span class="ab-name">LINUX DO 工具箱 v2.8.2</span>',
+      '<span class="ab-name">LINUX DO 工具箱 v2.8.3</span>',
       '<a class="ab-link" href="https://github.com/hawchou1995/linuxdo-toolbox" target="_blank" rel="noopener noreferrer">GitHub 仓库</a>',
       '<a class="ab-link" href="https://qingju.me/" target="_blank" rel="noopener noreferrer">qingju.me 论坛</a>',
       '<span class="ab-note">源码开源 · 欢迎来青橘（qingju.me）一起折腾</span>',
@@ -4194,7 +4198,7 @@
   // ---------- 测试/调试出口（无副作用） ----------
   try {
     window.__LDB64__ = {
-      version: '2.8.2',                        // 与脚本头 @version 保持同步（供调试与自检读取）
+      version: '2.8.3',                        // 与脚本头 @version 保持同步（供调试与自检读取）
       flags: FLAGS,
       CFG: CFG,
       MANUAL: MANUAL,

@@ -81,8 +81,9 @@ scripts/run-selfcheck.cjs    # 自检执行器：起本地静态服务 + 真实 
 
 ```bash
 node scripts/run-selfcheck.cjs
-# → 合计：全部断言通过 ；RESULT: PASS
+# → 合计：54 / 54 项通过；RESULT: PASS
 ```
+v2.8.3 扩展离线 Cloudflare 多路径回归覆盖；验证与恢复运行逻辑未变。
 
 自检覆盖三块。**⑦「只看此人」**：按钮位置、**点击调官方 `postStream.filterParticipant`（不整页跳）**、
 拿不到容器时退化为 `?username_filters=` 整页跳、**单帖用户也有按钮**、重复扫描去重、已筛选态变
