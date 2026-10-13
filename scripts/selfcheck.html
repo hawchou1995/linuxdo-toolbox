@@ -143,10 +143,31 @@
     if (scenario === 'cf-interstitial') {
       document.title = '請稍候...';
       window._cf_chl_opt = { cRay: 'offline-cf-ray', cH: 'offline-challenge', cUPMDTk: location.pathname + location.search };
+      var widgetActions = window.__CF_WIDGET_ACTIONS__ = [];
+      var cfFixture = document.createElement('div');
+      cfFixture.id = 'cf-challenge-fixture';
+      var cfVerify = document.createElement('button');
+      cfVerify.type = 'button';
+      cfVerify.textContent = 'Mock Cloudflare verification';
+      cfFixture.appendChild(cfVerify);
       var cfResponse = document.createElement('input');
       cfResponse.type = 'hidden';
       cfResponse.name = 'cf-turnstile-response';
-      document.body.appendChild(cfResponse);
+      cfFixture.appendChild(cfResponse);
+      document.body.appendChild(cfFixture);
+      ['click', 'input', 'change'].forEach(function (type) {
+        document.addEventListener(type, function (event) {
+          if (event.target && event.target.closest && event.target.closest('#cf-challenge-fixture')) {
+            widgetActions.push(type);
+          }
+        }, true);
+      });
+      var inputValue = '';
+      Object.defineProperty(cfResponse, 'value', {
+        configurable: true,
+        get: function () { return inputValue; },
+        set: function (value) { widgetActions.push('token-write'); inputValue = String(value); }
+      });
     }
   } else if (!scenarioOff) {
     try {
@@ -231,9 +252,14 @@
 
       if (scenario === 'cf-interstitial') {
         await sleep(250);
+        var originalChallengeUrl = location.href;
         var interstitialFlow = shield && shield.cfFlowSnapshot ? shield.cfFlowSnapshot() : null;
-        ok('CF⑫ 原 URL 内嵌的 Cloudflare challenge 被识别为等待态',
-          location.pathname === '/t/xxx/2998304' && !!interstitialFlow && interstitialFlow.target === location.href
+        var interstitialPath = location.pathname;
+        var pathCovered = interstitialPath === '/new' || interstitialPath === '/latest'
+          || /^\/t\/[^/]+\/\d+/.test(interstitialPath);
+        ok('CF⑫ 原 URL challenge 进入等待态并完整保留路径及查询参数',
+          pathCovered && location.search.indexOf('probe=') !== -1 && !!interstitialFlow
+            && interstitialFlow.target === originalChallengeUrl
             && /Cloudflare 挑战验证进行中/.test(reportShield())
             && !!document.querySelector('input[name="cf-turnstile-response"]'),
           JSON.stringify(interstitialFlow) + ' / ' + reportShield());
@@ -242,15 +268,20 @@
         delete window._cf_chl_opt;
         var responseInput = document.querySelector('input[name="cf-turnstile-response"]');
         if (responseInput) responseInput.remove();
-        document.title = 'Mock topic restored';
+        document.title = 'Mock page restored';
         var readyNode = document.createElement('div');
-        readyNode.id = 'mock-topic-restored';
+        readyNode.id = 'mock-page-restored';
         document.body.appendChild(readyNode);
         await waitFor(function () { return /挑战验证完成，已恢复原页面/.test(reportShield()); }, 8000);
-        ok('CF⑭ interstitial 正常完成后同 URL 自动确认恢复', location.href === interstitialFlow.target
-          && /挑战验证完成，已恢复原页面/.test(reportShield()), location.href + ' / ' + reportShield());
+        ok('CF⑭ challenge 消失并稳定后自动确认仍在原 URL', location.href === originalChallengeUrl
+          && /挑战验证完成，已恢复原页面/.test(reportShield()),
+          'actual=' + location.href + ' expected=' + originalChallengeUrl + ' / ' + reportShield());
         ok('CF⑮ interstitial 恢复确认后清除 flow', shield.cfFlowSnapshot() === null,
           JSON.stringify(shield.cfFlowSnapshot()));
+        ok('CF⑯ 验证等待与自动恢复期间未点击控件或写入 token',
+          window.__CF_WIDGET_ACTIONS__.length === 0 && responseInput.value === ''
+            && document.activeElement !== document.querySelector('#cf-challenge-fixture button'),
+          JSON.stringify(window.__CF_WIDGET_ACTIONS__) + ' / token=' + responseInput.value);
         finish();
         return;
       }

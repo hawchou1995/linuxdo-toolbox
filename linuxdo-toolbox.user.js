@@ -22,7 +22,7 @@
  *          ① 识别 Cloudflare managed challenge 的 `window._cf_chl_opt.cRay` 标记（如 `/new` 上的 Turnstile interstitial），
  *             在 sessionStorage 记录当前同源原地址并显示等待状态，不再误判为普通页面或重复跳盾。
  *          ② challenge 标记消失后沿用 1.2 秒结果确认；页面正常恢复则自动清除 flow，失败提示仍走有限重试。
- *          ③ 不点击/操作 Turnstile，不读取或构造 challenge token；离线 Chromium 自检扩至 43 项。
+ *          ③ 不点击/操作 Turnstile，不读取或构造 challenge token；自检覆盖 /new、/latest、/t/... 多路径恢复。
  * v2.8.1 —— 「过盾重试」挑战状态恢复：
  *          ① 站点出现拦截提示时保存同源原地址并进入挑战页；面板显示等待状态，挑战控件由页面自行处理。
  *          ② 挑战页正常返回后自动恢复原地址；返回目标页后观察 1.2 秒，确认没有拦截提示再清除 flow。

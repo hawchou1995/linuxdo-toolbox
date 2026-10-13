@@ -3,7 +3,7 @@
  * LINUX DO 工具箱离线自检执行器
  * ------------------------------------------------------------------
  * 起本地静态服务，把用户脚本注入 selfcheck.html，再用真实 Chromium 跑原功能和
- * cfShield 独立挑战页 / 同 URL Cloudflare interstitial / 自动恢复 / 冷却 / redirect / 重试上限场景。
+ * cfShield 独立挑战页 / 同 URL 的 /new、/latest、/t/... Cloudflare interstitial / 自动恢复 / 冷却 / redirect / 重试上限场景。
  *
  * 用法：  node scripts/run-selfcheck.cjs
  * 可用环境变量：
@@ -21,6 +21,19 @@ const PAGE = path.join(ROOT, 'scripts', 'selfcheck.html');
 const PORT = Number(process.env.SELFCHECK_PORT || 8791);
 const TOPIC_PATH = '/t/xxx/2998304';
 const BASE = `http://127.0.0.1:${PORT}`;
+const REQUIRED_MATCHES = ['https://linux.do/*', 'https://qingju.me/*', 'https://idcflare.com/*'];
+
+function verifyUserscriptMatches() {
+  const source = fs.readFileSync(USERSCRIPT, 'utf8');
+  const declared = source.split(/\r?\n/).map((line) => {
+    const match = line.match(/^\s*\/\/\s*@match\s+(\S+)\s*$/);
+    return match && match[1];
+  }).filter(Boolean);
+  const missing = REQUIRED_MATCHES.filter((match) => !declared.includes(match));
+  if (missing.length) throw new Error('用户脚本缺少 @match：' + missing.join(', '));
+  console.log(`用户脚本 @match 覆盖：${REQUIRED_MATCHES.length}/${REQUIRED_MATCHES.length} PASS`);
+}
+
 
 function resolvePlaywright() {
   const candidates = [];
@@ -83,6 +96,7 @@ async function runScenario(page, url, label) {
 }
 
 (async function main() {
+  verifyUserscriptMatches();
   const pw = resolvePlaywright();
   const server = await startServer();
   const exe = resolveExecutable();
@@ -105,7 +119,11 @@ async function runScenario(page, url, label) {
     })));
     scenarios.push(await runScenario(page, `${BASE}${TOPIC_PATH}?page=2&scenario=off`, '开关关闭（onlyUser=false）'));
 
-    const cfTarget = (name) => `${BASE}${TOPIC_PATH}?scenario=${name}`;
+    const cfTarget = (name, pathname = TOPIC_PATH, query = '') => {
+      const params = new URLSearchParams(query);
+      params.set('scenario', name);
+      return `${BASE}${pathname}?${params.toString()}`;
+    };
     const resetState = async () => page.evaluate(() => { sessionStorage.clear(); localStorage.clear(); });
 
     await resetState();
@@ -113,10 +131,17 @@ async function runScenario(page, url, label) {
       `${BASE}/challenge?scenario=cf-wait&redirect=${encodeURIComponent(cfTarget('cf-wait'))}`,
       '过盾：挑战等待、redirect 同源校验'));
 
-    await resetState();
-    scenarios.push(await runScenario(page,
-      `${cfTarget('cf-interstitial')}`,
-      '过盾：原 URL 内嵌 Cloudflare challenge 自动恢复'));
+    const interstitialCases = [
+      { pathname: '/new', query: 'subset=topics&page=2&probe=new' },
+      { pathname: '/latest', query: 'order=created&probe=latest' },
+      { pathname: TOPIC_PATH, query: 'page=3&probe=topic' }
+    ];
+    for (const testCase of interstitialCases) {
+      await resetState();
+      scenarios.push(await runScenario(page,
+        cfTarget('cf-interstitial', testCase.pathname, testCase.query),
+        `过盾：原 URL 内嵌 Cloudflare challenge 自动恢复（${testCase.pathname}）`));
+    }
 
     await resetState();
     scenarios.push(await runScenario(page,
