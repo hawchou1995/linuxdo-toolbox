@@ -1,12 +1,9 @@
 'use strict';
 /*
- * 「只看此人」离线自检执行器
+ * LINUX DO 工具箱离线自检执行器
  * ------------------------------------------------------------------
- * 起一个本地静态服务，把改后的用户脚本喂给 scripts/selfcheck.html，
- * 再用真实 Chromium（Playwright）跑两个场景并收集断言：
- *   场景 1（默认）：mock 话题 DOM + 注入脚本，验按钮位置 / 点击 URL / 单帖用户 /
- *                   重复扫描去重 / 已筛选态 / 非话题页 / 三个参数。
- *   场景 2（scenario=off）：把 onlyUser 关掉，验「关掉就不插任何按钮」。
+ * 起本地静态服务，把用户脚本注入 selfcheck.html，再用真实 Chromium 跑原功能和
+ * cfShield 挑战等待 / 自动恢复 / 失效冷却 / 同源 redirect / 重试上限场景。
  *
  * 用法：  node scripts/run-selfcheck.cjs
  * 可用环境变量：
@@ -102,11 +99,34 @@ async function runScenario(page, url, label) {
     // 场景 1：默认（脚本自带开关：只有 onlyUser 开）
     scenarios.push(await runScenario(page, `${BASE}${TOPIC_PATH}?page=2`, '默认（只看此人开启）'));
 
-    // 场景 2：把 onlyUser 关掉（先在同源写本地开关，再带 scenario=off 重进）
+    // 场景 2：开关关闭。
     await page.evaluate(() => localStorage.setItem('ldkit.flags.v1', JSON.stringify({
       b64: false, mdCopy: false, linkUnlock: false, autoReact: false, readBoost: false, cfShield: false, onlyUser: false
     })));
     scenarios.push(await runScenario(page, `${BASE}${TOPIC_PATH}?page=2&scenario=off`, '开关关闭（onlyUser=false）'));
+
+    const cfTarget = (name) => `${BASE}${TOPIC_PATH}?scenario=${name}`;
+    const resetState = async () => page.evaluate(() => { sessionStorage.clear(); localStorage.clear(); });
+
+    await resetState();
+    scenarios.push(await runScenario(page,
+      `${BASE}/challenge?scenario=cf-wait&redirect=${encodeURIComponent(cfTarget('cf-wait'))}`,
+      '过盾：挑战等待、redirect 同源校验'));
+
+    await resetState();
+    scenarios.push(await runScenario(page,
+      `${BASE}/challenge?scenario=cf-success&redirect=${encodeURIComponent(cfTarget('cf-success'))}`,
+      '过盾：挑战完成后自动恢复原页面'));
+
+    await resetState();
+    scenarios.push(await runScenario(page,
+      `${BASE}/challenge?scenario=cf-invalid&redirect=${encodeURIComponent(cfTarget('cf-invalid'))}`,
+      '过盾：挑战失效与冷却'));
+
+    await resetState();
+    scenarios.push(await runScenario(page,
+      `${cfTarget('cf-retry')}`,
+      '过盾：拦截失败后自动重试次数封顶'));
   } finally {
     await page.close();
     await ctx.close();

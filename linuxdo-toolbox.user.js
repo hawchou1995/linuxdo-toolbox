@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LINUX DO 工具箱
 // @namespace    https://linux.do/
-// @version      2.8.0
-// @description  LINUX DO 工具箱：七个功能在右下角面板各自独立开关，名字一律四个汉字 —— ① 密文自解（正文 Base64 就地解码；手动面板支持反向「主动加码」：明文 → Base64）② 原生复制（取 /raw/ 原生 Markdown 并附转载来源）③ 外链解锁（外链免登录可见，强制新标签页）④ 随读回应（跟随阅读随机回应，跳过爱心与 +1）⑤ 已读提速（批量同步已读帖数与阅读时长）⑥ 过盾重试（盾验证失败时自动跳回盾页重试）⑦ 只看此人（每层楼用户名旁一键只看该用户的帖子，跳过点头像两步，只发过 1 帖的用户也能筛）。面板两级导航：主看板一行一个功能，点进去是它自己的子看板；所有看板宽高统一，切换不跳动；底部另有「一键全默认」。仓库 github.com/hawchou1995/linuxdo-toolbox · 论坛 qingju.me
+// @version      2.8.1
+// @description  LINUX DO 工具箱：七个功能在右下角面板各自独立开关，名字一律四个汉字 —— ① 密文自解（正文 Base64 就地解码；手动面板支持反向「主动加码」：明文 → Base64）② 原生复制（取 /raw/ 原生 Markdown 并附转载来源）③ 外链解锁（外链免登录可见，强制新标签页）④ 随读回应（跟随阅读随机回应，跳过爱心与 +1）⑤ 已读提速（批量同步已读帖数与阅读时长）⑥ 过盾重试（拦截后打开盾页；验证完成自动恢复原页）⑦ 只看此人（每层楼用户名旁一键只看该用户的帖子，跳过点头像两步，只发过 1 帖的用户也能筛）。面板两级导航：主看板一行一个功能，点进去是它自己的子看板；所有看板宽高统一，切换不跳动；底部另有「一键全默认」。仓库 github.com/hawchow1995/linuxdo-toolbox · 论坛 qingju.me
 // @author       牛来 · XAUTHUB · HawChow · Sunwuyuan · adodo · Pipecraft
 // @match        https://linux.do/*
 // @match        https://qingju.me/*
@@ -18,6 +18,12 @@
 // ==/UserScript==
 
 /*
+ * v2.8.1 —— 「过盾重试」挑战状态恢复：
+ *          ① 站点出现拦截提示时保存同源原地址并进入挑战页；面板显示等待状态，挑战控件由页面自行处理。
+ *          ② 挑战页正常返回后自动恢复原地址；返回目标页后观察 1.2 秒，确认没有拦截提示再清除 flow。
+ *          ③ 挑战失效时优先恢复已保存的同源目标；保留每标签页 5 秒冷却，自动挑战次数最多 2 次，
+ *             flow 十分钟过期；跨源 redirect、挑战页自身路径和带凭据地址均拒绝。
+ *          ④ 离线 Chromium 自检扩至 39 项，覆盖等待、正常恢复、失效冷却、同源校验和重试上限。
  * v2.8.0 —— 「密文自解」加反向能力：「主动加码」（明文 → Base64）：
  *          ① 「密文自解」子看板顶部多了一个方向开关：「密文 → 明文」（原来的解码）／
  *             「明文 → 密文」（新增的加码）。切过去就是把输入当明文、产出 Base64 密文；
@@ -3533,21 +3539,24 @@
   }
 
   // ================================================================
-  // 模块 F：过盾重试（源：LINUX.DO CloudFlare Challenge Bypass v0.3.2，作者 Pipecraft / utags）
-  //   Cloudflare 5 秒盾验证失败时，linux.do 会在页面上弹出错误对话框
-  //   （「403 error」「我们无法加载该话题」「该回应是很久以前创建的」…），
-  //   本模块检测到就把页面跳回 /challenge?redirect=<当前地址> 重过一次盾；
-  //   盾页自身返回「页面不存在」时，按 redirect 参数或站点首页兜底返回，
-  //   并有跳转冷却（默认 5 秒）防止两边来回弹跳。
-  //   原脚本的 GM_registerMenuCommand 菜单命令改为面板按钮（立即跳转 / 重置记录）。
+  // 模块 F：过盾重试
+  //   检测到站点拦截提示后记录同源原地址并进入挑战页；等待 Cloudflare 页面自行完成验证。
+  //   挑战页返回后自动恢复原地址；挑战失效时沿用同源 redirect、冷却与有限自动重试。
+  //   本模块不操作验证控件，也不读取或构造 challenge token。
+  //   面板保留「立即跳转 / 重置记录」操作。
   // ================================================================
   function initCloudShield() {
     if (window.__ldkitCloudShield) return;
     window.__ldkitCloudShield = true;
     if (!document.body) return;
 
-    const GUARD_KEY = 'ldkit.cf.guard.v1';        // 跳转冷却时间戳（sessionStorage，随标签页）
+    const GUARD_KEY = 'ldkit.cf.guard.v1';
+    const FLOW_KEY = 'ldkit.cf.flow.v1';
+    const AUTO_RETRY_LIMIT = 2;
+    const FLOW_TTL_MS = 10 * 60 * 1000;
+    const RETURN_SETTLE_MS = 1200;
     let lastHref = location.href;
+    let returnTimer = 0;
 
     function P() { return getParams('cfShield'); }
 
@@ -3580,10 +3589,52 @@
       return (isFinite(n) && n >= 0) ? Math.floor(n) : 5000;
     }
 
-    // 跳转目标：challenge 盾页重过（默认）/ reload 重载本页 / home 回到首页
     function jumpMode() {
       const m = String(P().jumpMode || 'challenge');
       return (m === 'reload' || m === 'home') ? m : 'challenge';
+    }
+
+    function safeReturnUrl(raw) {
+      try {
+        const url = new URL(String(raw || ''), location.origin);
+        const cp = challengePath();
+        if (url.origin !== location.origin || url.username || url.password) return null;
+        if (url.pathname === cp || url.pathname.indexOf(cp + '/') === 0) return null;
+        return url.href;
+      } catch (e) { return null; }
+    }
+
+    function readFlow() {
+      try {
+        const raw = sessionStorage.getItem(FLOW_KEY);
+        if (!raw) return null;
+        const value = JSON.parse(raw);
+        const target = value && safeReturnUrl(value.target);
+        const updatedAt = Number(value && value.updatedAt);
+        if (!target || !isFinite(updatedAt) || Date.now() - updatedAt > FLOW_TTL_MS || updatedAt > Date.now() + 60000) {
+          sessionStorage.removeItem(FLOW_KEY);
+          return null;
+        }
+        const attempts = Number(value.attempts);
+        return {
+          target: target,
+          attempts: isFinite(attempts) ? Math.max(0, Math.min(AUTO_RETRY_LIMIT, Math.floor(attempts))) : 0,
+          mode: value.mode === 'home' || value.mode === 'reload' ? value.mode : 'challenge',
+          phase: value.phase === 'exhausted' || value.phase === 'invalid' || value.phase === 'returning' ? value.phase : 'challenge',
+          updatedAt: updatedAt
+        };
+      } catch (e) { return null; }
+    }
+
+    function writeFlow(flow) {
+      if (!flow || !safeReturnUrl(flow.target)) return false;
+      flow.updatedAt = Date.now();
+      try { sessionStorage.setItem(FLOW_KEY, JSON.stringify(flow)); return true; }
+      catch (e) { return false; }
+    }
+
+    function clearFlow() {
+      try { sessionStorage.removeItem(FLOW_KEY); } catch (e) { /* ignore */ }
     }
 
     function lastJumpAt() {
@@ -3601,11 +3652,13 @@
     function redirectParamUrl() {
       try {
         const raw = new URLSearchParams(location.search).get('redirect');
-        if (!raw) return null;
-        const url = new URL(raw, location.origin);
-        if (url.origin !== location.origin) return null;
-        return url.href;
+        return raw ? safeReturnUrl(raw) : null;
       } catch (e) { return null; }
+    }
+
+    function flowOrRedirect() {
+      const flow = readFlow();
+      return flow ? flow.target : redirectParamUrl();
     }
 
     function say(text, dotClass, stickyMs) {
@@ -3613,24 +3666,6 @@
       if (dotClass) { try { KitUI.setCfDot(dotClass); } catch (e) { /* ignore */ } }
     }
 
-    // 盾页失效（页面不存在）→ 退回 redirect 指定的页面，否则回首页（可在参数里关掉）
-    function backFromNotFound() {
-      const now = Date.now();
-      if (lastJumpAt() && now - lastJumpAt() < guardMs()) return false;
-      const fromParam = redirectParamUrl();
-      if (!fromParam && P().homeFallback === false) {
-        say('盾页已失效，但没有可回退的地址（回首页已在参数里关闭）', 'err');
-        return false;
-      }
-      const target = fromParam || (location.origin + '/');
-      const fallback = location.origin + '/';
-      markJump(now);
-      say('盾页已失效，正在返回上一页…', 'warn');
-      location.replace(target === location.href ? fallback : target);
-      return true;
-    }
-
-    // 盾拦截失败：错误对话框里出现任一关键词
     function shieldFailed() {
       if (isChallengePage()) return false;
       const dialog = document.querySelector('.dialog-body');
@@ -3642,37 +3677,82 @@
       return false;
     }
 
-    // 纯决策：算出该不该跳、跳到哪（无副作用，便于自检与测试）
     function planJump(manual) {
       const mode = jumpMode();
       if (isChallengePage()) return { jump: false, reason: 'on-challenge', mode: mode, url: null };
       const now = Date.now();
-      const since = now - lastJumpAt();
-      if (!manual && lastJumpAt() && since < guardMs()) {
+      const last = lastJumpAt();
+      const since = now - last;
+      if (!manual && last && since < guardMs()) {
         return {
           jump: false, reason: 'cooldown', mode: mode, url: null,
           left: Math.max(1, Math.ceil((guardMs() - since) / 1000))
         };
       }
+      const flow = readFlow();
+      if (!manual && flow && (flow.phase === 'exhausted' || flow.attempts >= AUTO_RETRY_LIMIT)) {
+        return { jump: false, reason: 'retry-limit', mode: mode, url: null, attempts: flow.attempts };
+      }
       if (mode === 'home') return { jump: true, reason: 'shield', mode: mode, url: location.origin + '/' };
       if (mode === 'reload') return { jump: true, reason: 'shield', mode: mode, url: location.href };
+      const target = flow ? flow.target : (safeReturnUrl(location.href) || location.href);
       return {
         jump: true, reason: 'shield', mode: mode,
-        url: challengePath() + '?redirect=' + encodeURIComponent(location.href)
+        url: challengePath() + '?redirect=' + encodeURIComponent(target)
       };
     }
 
     function toChallenge(manual) {
       const plan = planJump(manual);
       if (!plan.jump) {
-        if (plan.reason === 'on-challenge') say('已在盾页，无需跳转', 'on', 2500);
-        else say('检测到盾拦截，冷却中（约 ' + plan.left + ' 秒后自动重试）', 'off');
+        if (plan.reason === 'on-challenge') say('正在挑战页：完成验证后自动返回原页面', 'pause');
+        else if (plan.reason === 'retry-limit') {
+          const flow = readFlow();
+          if (flow) { flow.phase = 'exhausted'; writeFlow(flow); }
+          say('自动重试已达上限（' + AUTO_RETRY_LIMIT + ' 次），已停止；可手动重试', 'err');
+        } else say('检测到拦截，重试冷却中（约 ' + plan.left + ' 秒后继续）', 'pause');
         return false;
       }
-      markJump(Date.now());
-      say('检测到盾拦截失败，正在' + (plan.mode === 'home' ? '返回首页' : (plan.mode === 'reload' ? '重载本页' : '跳回盾页')) + '…', 'run');
+
+      const now = Date.now();
+      const previous = readFlow();
+      if (plan.mode === 'challenge') {
+        const target = previous ? previous.target : (safeReturnUrl(location.href) || location.href);
+        const attempts = Math.min(AUTO_RETRY_LIMIT, (previous ? previous.attempts : 0) + (manual ? 0 : 1));
+        writeFlow({ target: target, attempts: attempts, mode: 'challenge', phase: 'challenge', updatedAt: now });
+      } else {
+        const target = previous ? previous.target : (safeReturnUrl(location.href) || location.href);
+        const attempts = Math.min(AUTO_RETRY_LIMIT, (previous ? previous.attempts : 0) + (manual ? 0 : 1));
+        writeFlow({ target: target, attempts: attempts, mode: plan.mode, phase: 'challenge', updatedAt: now });
+      }
+
+      if (returnTimer) { clearTimeout(returnTimer); returnTimer = 0; }
+      markJump(now);
+      say('检测到盾拦截，正在' + (plan.mode === 'home' ? '返回首页' : (plan.mode === 'reload' ? '重载本页' : '打开挑战页')) + '…', 'run');
       if (plan.mode === 'reload') location.reload();
       else location.href = plan.url;
+      return true;
+    }
+
+    function backFromNotFound() {
+      const now = Date.now();
+      const last = lastJumpAt();
+      const since = now - last;
+      if (last && since < guardMs()) {
+        say('挑战页失效，恢复动作处于冷却中（约 ' + Math.max(1, Math.ceil((guardMs() - since) / 1000)) + ' 秒）', 'pause');
+        return false;
+      }
+      const target = flowOrRedirect();
+      if (!target && P().homeFallback === false) {
+        say('挑战页已失效，未找到可恢复地址；自动跳转已停止', 'err');
+        return false;
+      }
+      const destination = target || (location.origin + '/');
+      markJump(now);
+      const flow = readFlow();
+      if (flow) { flow.phase = 'returning'; writeFlow(flow); }
+      say('挑战页失效，正在恢复原页面…', 'warn');
+      location.replace(destination === location.href ? (location.origin + '/') : destination);
       return true;
     }
 
@@ -3681,55 +3761,110 @@
       return toChallenge(false);
     }
 
-    function refreshReady() {
+    function startReturnCheck() {
+      const flow = readFlow();
+      if (!flow) return;
       if (isChallengePage()) {
-        say(isNotFoundPage() ? '盾页失效：等 redirect 或首页兜底' : '正在盾页，等待验证通过', 'pause');
+        if (isNotFoundPage()) backFromNotFound();
+        else say('挑战验证进行中；完成后自动恢复原页面', 'pause');
         return;
       }
-      say('就绪：监听盾拦截提示（' + keywords().length + ' 条关键词）', 'on');
+      if (shieldFailed()) { checkAndJump(); return; }
+      if (flow.phase === 'exhausted') {
+        say('自动重试已达上限（' + AUTO_RETRY_LIMIT + ' 次），已停止；可手动重试', 'err');
+        return;
+      }
+      if (flow.phase === 'invalid') {
+        say('挑战已结束，但目标页无效；自动恢复已停止', 'err');
+        return;
+      }
+      if (flow.mode === 'challenge' && location.href !== flow.target) {
+        flow.phase = 'returning';
+        writeFlow(flow);
+        say('挑战已完成，正在自动返回原页面…', 'run');
+        location.replace(flow.target);
+        return;
+      }
+      if (returnTimer) return;
+      say(flow.mode === 'challenge' ? '已返回站点，正在确认挑战结果…' : '盾拦截处理后正在确认页面状态…', 'pause');
+      returnTimer = setTimeout(function () {
+        returnTimer = 0;
+        const latest = readFlow();
+        if (!latest || isChallengePage()) return;
+        if (shieldFailed()) { checkAndJump(); return; }
+        if (latest.mode === 'challenge' && location.href !== latest.target) {
+          startReturnCheck();
+          return;
+        }
+        if (isNotFoundPage()) {
+          latest.phase = 'invalid';
+          writeFlow(latest);
+          say('挑战已结束，但原页面不存在；自动重试已停止', 'err');
+          return;
+        }
+        clearFlow();
+        say(latest.mode === 'challenge' ? '挑战验证完成，已恢复原页面' : '盾拦截处理完成，页面已恢复', 'on');
+      }, RETURN_SETTLE_MS);
     }
 
-    // ---- 面板按钮 ----
+    function refreshReady() {
+      if (isChallengePage()) say(isNotFoundPage() ? '挑战页失效，等待冷却后恢复' : '挑战验证进行中；完成后自动恢复原页面', 'pause');
+      else say('就绪：监听盾拦截提示（' + keywords().length + ' 条关键词）', 'on');
+    }
+
     KitUI.cfJump = function () { toChallenge(true); };
-    KitUI.cfPlanJump = planJump;                 // 只读决策出口：不跳转，供自检/测试读取
+    KitUI.cfPlanJump = planJump;
+    KitUI.cfValidateRedirect = safeReturnUrl;
+    KitUI.cfFlowSnapshot = function () { return readFlow(); };
     KitUI.cfResetGuard = function () {
       markJump(0);
-      say('已重置跳转冷却，可立即重试', 'pause', 2500);
+      clearFlow();
+      say('已重置跳转冷却与挑战记录，可立即重试', 'pause', 2500);
     };
 
-    // ---- 启动 ----
     if (isChallengePage()) {
+      if (!readFlow()) {
+        const target = redirectParamUrl();
+        if (target) writeFlow({ target: target, attempts: 0, mode: 'challenge', phase: 'challenge', updatedAt: Date.now() });
+      }
       refreshReady();
-      if (isNotFoundPage()) { backFromNotFound(); return; }
+      if (isNotFoundPage()) backFromNotFound();
     } else {
-      refreshReady();
-      if (checkAndJump()) return;
+      const flow = readFlow();
+      if (flow) startReturnCheck();
+      else {
+        refreshReady();
+        checkAndJump();
+      }
     }
 
     try {
       const MO = new MutationObserver(function () {
         if (isChallengePage()) {
           if (isNotFoundPage()) backFromNotFound();
+          else say('挑战验证进行中；完成后自动恢复原页面', 'pause');
           return;
         }
-        checkAndJump();
+        if (!checkAndJump() && readFlow()) startReturnCheck();
       });
       MO.observe(document.body, { childList: true, subtree: true, characterData: true });
     } catch (e) { /* ignore */ }
 
-    // 盾拦截也可能由 XHR 失败后弹出：换页时重估，并周期兜住「盾页失效」这一路
     setInterval(function () {
-      if (location.href !== lastHref) {
+      const changed = location.href !== lastHref;
+      if (changed) {
         lastHref = location.href;
         if (isChallengePage()) {
-          if (isNotFoundPage()) { backFromNotFound(); return; }
-          say('正在盾页，等待验证通过', 'pause');
+          if (isNotFoundPage()) backFromNotFound();
+          else say('挑战验证进行中；完成后自动恢复原页面', 'pause');
           return;
         }
-        refreshReady();
-        if (checkAndJump()) return;
       }
-      if (isChallengePage() && isNotFoundPage()) backFromNotFound();
+      if (isChallengePage()) {
+        if (isNotFoundPage()) backFromNotFound();
+        return;
+      }
+      if (!checkAndJump() && readFlow()) startReturnCheck();
     }, 1500);
   }
   // ================================================================
@@ -4026,7 +4161,7 @@
   // ---------- 测试/调试出口（无副作用） ----------
   try {
     window.__LDB64__ = {
-      version: '2.8.0',                        // 与脚本头 @version 保持同步（供调试与自检读取）
+      version: '2.8.1',                        // 与脚本头 @version 保持同步（供调试与自检读取）
       flags: FLAGS,
       CFG: CFG,
       MANUAL: MANUAL,

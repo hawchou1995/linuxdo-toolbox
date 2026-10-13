@@ -14,7 +14,7 @@
 | ③ | **外链解锁** | 破解 External Link Shield：外链免登录可见，点击强制新标签页打开，也不弹站点提示。 |
 | ④ | **随读回应** | 跟随阅读，只对「当前可见且未回应」的楼层随机回一个反应（跳过爱心与 +1）；带服务端冷却识别、每日兜底上限、跨标签页计数。 |
 | ⑤ | **已读提速** | 向 `/topics/timings` 批量同步已读帖数与阅读时长，快速刷已读；带本地进度记忆、可清空重刷。 |
-| ⑥ | **过盾重试** | Cloudflare 5 秒盾验证失败时自动跳回盾页重试；盾页失效则按配置回首页或重载本页。 |
+| ⑥ | **过盾重试** | 检测到拦截后打开 Cloudflare 挑战页；挑战页自行完成验证后自动恢复原地址。redirect 限同源，带 5 秒冷却、最多 2 次自动重试；不自动操作验证控件。 |
 | ⑦ | **只看此人** | 每层楼用户名右侧长出一个按钮，**一点即只列该用户的帖子**，跳过官方那两步（点头像 → 点「话题中的 N 个帖子」）。 |
 
 
@@ -73,23 +73,23 @@
 
 ```
 linuxdo-toolbox.user.js      # 单文件用户脚本（就是它本体，直接可装）
-scripts/selfcheck.html       # 离线自检页：mock 话题 DOM + 假 Discourse 容器 + 真面板 shadow DOM + 28 项断言
-scripts/run-selfcheck.cjs    # 自检执行器：起本地静态服务 + 真实 Chromium 跑两个场景
+scripts/selfcheck.html       # 离线自检页：mock 话题 DOM、Discourse 容器、面板 shadow DOM 与挑战状态，共 39 项断言
+scripts/run-selfcheck.cjs    # 自检执行器：起本地静态服务 + 真实 Chromium 跑原功能与过盾场景
 ```
 
 跑一遍自检（需要本机有 Playwright 的 Chromium；`PLAYWRIGHT_CORE` / `CHROME_PATH` 可指定路径）：
 
 ```bash
 node scripts/run-selfcheck.cjs
-# → 合计：28 / 28 项通过 ；RESULT: PASS
+# → 合计：39 / 39 项通过 ；RESULT: PASS
 ```
 
-自检覆盖两块。**⑦「只看此人」**：按钮位置、**点击调官方 `postStream.filterParticipant`（不整页跳）**、
+自检覆盖三块。**⑦「只看此人」**：按钮位置、**点击调官方 `postStream.filterParticipant`（不整页跳）**、
 拿不到容器时退化为 `?username_filters=` 整页跳、**单帖用户也有按钮**、重复扫描去重、已筛选态变
 「显示全部」并调官方 `cancelFilter`、面板「显示全部」出口、离开话题页清除、三个参数生效、开关关闭时不插。
-**①「密文自解」双向互转**（驱动真面板的 shadow DOM）：方向切换、明文 → 密文产出纯 Base64 字母表、
-输出块带「复制」、**往返一致（编出来再解回来 === 原文，含中文 / emoji / 换行）**、URL 安全字母表、
-按行折行、加码层数标签、两层 + URL 安全 + 折行组合的输出仍能解回原文。
+**①「密文自解」双向互转**（驱动真面板的 shadow DOM）：方向切换、明文 → 密文、复制、中文 / emoji / 换行往返、
+URL 安全字母表、折行和多层组合往返。**⑥「过盾重试」**：挑战等待、无自动控件操作、正常返回后自动恢复原 URL、
+挑战失效冷却、同源 redirect 接受 / 跨源拒绝、站点拦截识别与自动重试次数封顶。
 
 ## 开源与社区
 

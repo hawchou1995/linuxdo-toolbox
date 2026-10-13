@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>LINUX DO 工具箱 · 「只看此人」离线真机自检</title>
+<title>LINUX DO 工具箱 · 离线自检（真 Chromium）</title>
 <style>
   body { font: 13px/1.6 ui-monospace, Consolas, monospace; margin: 16px; max-width: 1100px; color: #222; }
   h1 { font-size: 15px; }
@@ -17,7 +17,7 @@
 </style>
 </head>
 <body>
-<h1>LINUX DO 工具箱 · 「只看此人」离线自检（真 Chromium）</h1>
+<h1>LINUX DO 工具箱 · 离线自检（真 Chromium）</h1>
 <pre id="report">running…</pre>
 
 <div id="mock-topic" class="topic-stream">
@@ -110,12 +110,37 @@
     window.__SELFCHECK_DONE__ = true;
   }
 
-  // ---- 运行模式：scenario=off 时不改写本地开关（由外部预置 onlyUser=false 来验「关掉就不插」）----
+  // ---- 运行模式：cf-* 场景启用过盾模块，其余场景沿用只看此人自检 ----
   var params = new URLSearchParams(location.search);
   var scenarioOff = params.get('scenario') === 'off';
+  var scenario = params.get('scenario') || '';
+  var redirectForScenario = params.get('redirect');
+  if (!scenario && redirectForScenario) {
+    try { scenario = new URL(redirectForScenario, location.href).searchParams.get('scenario') || ''; } catch (e) { /* ignore */ }
+  }
+  var cfScenario = scenario.indexOf('cf-') === 0;
 
-  // ---- 只跑到「只看此人」：其余六个功能全部关掉，避免自检页面发无谓请求 ----
-  if (!scenarioOff) {
+  if (cfScenario) {
+    try {
+      localStorage.setItem('ldkit.flags.v1', JSON.stringify({
+        b64: false, mdCopy: false, linkUnlock: false, autoReact: false, readBoost: false, cfShield: true, onlyUser: false
+      }));
+      localStorage.removeItem('ldkit.params.v1');
+      if (scenario === 'cf-invalid') sessionStorage.setItem('ldkit.cf.guard.v1', String(Date.now()));
+    } catch (e) { /* ignore */ }
+    if (scenario === 'cf-invalid') {
+      var missingChallenge = document.createElement('div');
+      missingChallenge.className = 'page-not-found';
+      missingChallenge.textContent = 'mock challenge not found';
+      document.body.appendChild(missingChallenge);
+    }
+    if (scenario === 'cf-retry' && location.pathname !== '/challenge') {
+      var blockedDialog = document.createElement('div');
+      blockedDialog.className = 'dialog-body';
+      blockedDialog.textContent = '403 error';
+      document.body.appendChild(blockedDialog);
+    }
+  } else if (!scenarioOff) {
     try {
       localStorage.setItem('ldkit.flags.v1', JSON.stringify({
         b64: false, mdCopy: false, linkUnlock: false, autoReact: false, readBoost: false, cfShield: false, onlyUser: true
@@ -123,7 +148,6 @@
       localStorage.removeItem('ldkit.params.v1');
     } catch (e) { /* ignore */ }
   }
-
   // ---- 假 Discourse 上下文：container → controller:topic → model.postStream ----
   // 真机上这一串拿到的就是官方点击头像时用的那份 postStream，所以这里按同一形状 mock。
   var OU = { filterCalls: [], cancelCalls: [], refreshes: 0 };
@@ -165,6 +189,89 @@
   }
 
   inject().then(function () { return sleep(150); }).then(async function () {
+    if (cfScenario) {
+      var shield = window.__LDB64__ && window.__LDB64__.cloudShield;
+      var target = shield && shield.cfFlowSnapshot ? shield.cfFlowSnapshot() : null;
+      var targetUrl = target && target.target;
+      var waitFor = async function (predicate, timeoutMs) {
+        var end = Date.now() + timeoutMs;
+        while (Date.now() < end) {
+          if (predicate()) return true;
+          await sleep(100);
+        }
+        return !!predicate();
+      };
+      var reportShield = function () { return shield ? shield._cfStatus : 'cfShield 未初始化'; };
+
+      if (scenario === 'cf-wait') {
+        await sleep(250);
+        ok('CF① 挑战页显示等待状态且不操作验证控件', location.pathname === '/challenge'
+          && /挑战验证进行中/.test(reportShield())
+          && !!(document.getElementById('ldb64-manual-host')
+            && document.getElementById('ldb64-manual-host').shadowRoot
+            && document.getElementById('ldb64-manual-host').shadowRoot.querySelector('.cf-status')),
+          location.pathname + ' / ' + reportShield());
+        ok('CF② redirect 只接受同源目标并保留原地址', !!targetUrl && shield.cfValidateRedirect(targetUrl) === targetUrl,
+          targetUrl || 'flow target missing');
+        ok('CF③ 拒绝跨源 redirect', shield.cfValidateRedirect('https://evil.example/steal') === null,
+          String(shield.cfValidateRedirect('https://evil.example/steal')));
+        ok('CF④ 挑战页不触发自动跳转决策', !!shield.cfPlanJump(false) && shield.cfPlanJump(false).reason === 'on-challenge',
+          JSON.stringify(shield.cfPlanJump(false)));
+        finish();
+        return;
+      }
+
+      if (scenario === 'cf-invalid') {
+        await sleep(250);
+        ok('CF⑤ 挑战页失效时识别冷却并保持当前页', location.pathname === '/challenge'
+          && /冷却中/.test(reportShield()), location.pathname + ' / ' + reportShield());
+        ok('CF⑥ 冷却中的失效挑战仍保留同源原目标', !!targetUrl && shield.cfValidateRedirect(targetUrl) === targetUrl,
+          targetUrl || 'flow target missing');
+        finish();
+        return;
+      }
+
+      if (scenario === 'cf-success' && location.pathname === '/challenge') {
+        setTimeout(function () { history.replaceState({}, '', '/latest?scenario=cf-success'); }, 250);
+        return;
+      }
+      if (scenario === 'cf-success') {
+        var expectedSuccessUrl = new URL(targetUrl || location.href).href;
+        await waitFor(function () { return /挑战验证完成/.test(reportShield()); }, 8000);
+        ok('CF⑦ 挑战页正常返回后自动恢复原目标 URL', location.href === expectedSuccessUrl,
+          'actual=' + location.href + ' expected=' + expectedSuccessUrl);
+        ok('CF⑧ 恢复完成后清除本次 flow', !!shield && shield.cfFlowSnapshot() === null,
+          JSON.stringify(shield && shield.cfFlowSnapshot()));
+        ok('CF⑨ 恢复状态可见且无需面板点击', /挑战验证完成，已恢复原页面/.test(reportShield()), reportShield());
+        finish();
+        return;
+      }
+
+      if (scenario === 'cf-retry') {
+        if (location.pathname === '/challenge') {
+          target = shield && shield.cfFlowSnapshot ? shield.cfFlowSnapshot() : null;
+          targetUrl = target && target.target;
+          if (targetUrl) {
+            var returnTarget = new URL(targetUrl);
+            var failedReturn = document.createElement('div');
+            failedReturn.className = 'dialog-body';
+            failedReturn.textContent = '403 error';
+            document.body.appendChild(failedReturn);
+            history.replaceState({}, '', returnTarget.pathname + returnTarget.search + returnTarget.hash);
+          }
+        }
+        await waitFor(function () { return /自动重试已达上限/.test(reportShield()); }, 15000);
+        target = shield && shield.cfFlowSnapshot ? shield.cfFlowSnapshot() : null;
+        ok('CF⑩ 站点拦截错误进入有上限的自动重试', !!target && target.phase === 'exhausted'
+          && target.attempts === 2 && /自动重试已达上限/.test(reportShield()),
+          JSON.stringify(target) + ' / ' + reportShield());
+        ok('CF⑪ 达到上限后停留在原目标，不再循环导航', location.pathname === '/t/xxx/2998304'
+          && new URL(location.href).searchParams.get('scenario') === 'cf-retry', location.href);
+        finish();
+        return;
+      }
+    }
+
     if (scenarioOff) {
       await sleep(500);
       ok('⑨ 开关关闭（onlyUser=false）时不插入任何按钮', all('.ldkit-onlyuser').length === 0,
