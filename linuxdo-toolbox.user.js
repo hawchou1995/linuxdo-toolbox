@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LINUX DO 工具箱
 // @namespace    https://linux.do/
-// @version      2.8.1
-// @description  LINUX DO 工具箱：七个功能在右下角面板各自独立开关，名字一律四个汉字 —— ① 密文自解（正文 Base64 就地解码；手动面板支持反向「主动加码」：明文 → Base64）② 原生复制（取 /raw/ 原生 Markdown 并附转载来源）③ 外链解锁（外链免登录可见，强制新标签页）④ 随读回应（跟随阅读随机回应，跳过爱心与 +1）⑤ 已读提速（批量同步已读帖数与阅读时长）⑥ 过盾重试（拦截后打开盾页；验证完成自动恢复原页）⑦ 只看此人（每层楼用户名旁一键只看该用户的帖子，跳过点头像两步，只发过 1 帖的用户也能筛）。面板两级导航：主看板一行一个功能，点进去是它自己的子看板；所有看板宽高统一，切换不跳动；底部另有「一键全默认」。仓库 github.com/hawchow1995/linuxdo-toolbox · 论坛 qingju.me
+// @version      2.8.2
+// @description  LINUX DO 工具箱：七个功能在右下角面板各自独立开关，名字一律四个汉字 —— ① 密文自解（正文 Base64 就地解码；手动面板支持反向「主动加码」：明文 → Base64）② 原生复制（取 /raw/ 原生 Markdown 并附转载来源）③ 外链解锁（外链免登录可见，强制新标签页）④ 随读回应（跟随阅读随机回应，跳过爱心与 +1）⑤ 已读提速（批量同步已读帖数与阅读时长）⑥ 过盾重试（识别 Cloudflare 挑战页，包含原页面内嵌挑战；验证完成自动恢复原页）⑦ 只看此人（每层楼用户名旁一键只看该用户的帖子，跳过点头像两步，只发过 1 帖的用户也能筛）。面板两级导航：主看板一行一个功能，点进去是它自己的子看板；所有看板宽高统一，切换不跳动；底部另有「一键全默认」。仓库 github.com/hawchow1995/linuxdo-toolbox · 论坛 qingju.me
 // @author       牛来 · XAUTHUB · HawChow · Sunwuyuan · adodo · Pipecraft
 // @match        https://linux.do/*
 // @match        https://qingju.me/*
@@ -18,6 +18,11 @@
 // ==/UserScript==
 
 /*
+ * v2.8.2 —— 修「Cloudflare 挑战挂在原 URL 时状态仍显示就绪」：
+ *          ① 识别 Cloudflare managed challenge 的 `window._cf_chl_opt.cRay` 标记（如 `/new` 上的 Turnstile interstitial），
+ *             在 sessionStorage 记录当前同源原地址并显示等待状态，不再误判为普通页面或重复跳盾。
+ *          ② challenge 标记消失后沿用 1.2 秒结果确认；页面正常恢复则自动清除 flow，失败提示仍走有限重试。
+ *          ③ 不点击/操作 Turnstile，不读取或构造 challenge token；离线 Chromium 自检扩至 43 项。
  * v2.8.1 —— 「过盾重试」挑战状态恢复：
  *          ① 站点出现拦截提示时保存同源原地址并进入挑战页；面板显示等待状态，挑战控件由页面自行处理。
  *          ② 挑战页正常返回后自动恢复原地址；返回目标页后观察 1.2 秒，确认没有拦截提示再清除 flow。
@@ -1396,7 +1401,7 @@
       '<button type="button" class="mini" data-cfg-reset-all="1" title="把七个功能的参数全部恢复为出厂默认值">一键全默认</button>',
       '<span class="hint">参数改动即时生效，不用刷新</span>',
       '<div class="about">',
-      '<span class="ab-name">LINUX DO 工具箱 v2.7.0</span>',
+      '<span class="ab-name">LINUX DO 工具箱 v2.8.2</span>',
       '<a class="ab-link" href="https://github.com/hawchou1995/linuxdo-toolbox" target="_blank" rel="noopener noreferrer">GitHub 仓库</a>',
       '<a class="ab-link" href="https://qingju.me/" target="_blank" rel="noopener noreferrer">qingju.me 论坛</a>',
       '<span class="ab-note">源码开源 · 欢迎来青橘（qingju.me）一起折腾</span>',
@@ -3579,6 +3584,13 @@
       const cp = challengePath();
       return location.pathname === cp || location.pathname.indexOf(cp + '/') === 0;
     }
+    // Cloudflare managed challenge may render in-place on the requested URL (for example /new),
+    // rather than navigating to the configured /challenge path. cRay is emitted by CF's challenge page.
+    function isCloudflareInterstitial() {
+      if (isChallengePage()) return false;
+      const opt = window._cf_chl_opt;
+      return !!(opt && typeof opt === 'object' && (opt.cRay || opt.cUPMDTk));
+    }
 
     function isNotFoundPage() {
       return !!document.querySelector('.page-not-found');
@@ -3632,6 +3644,14 @@
       try { sessionStorage.setItem(FLOW_KEY, JSON.stringify(flow)); return true; }
       catch (e) { return false; }
     }
+    function ensureCloudflareFlow() {
+      const existing = readFlow();
+      if (existing) return existing;
+      const target = safeReturnUrl(location.href);
+      if (!target) return null;
+      const flow = { target: target, attempts: 0, mode: 'challenge', phase: 'challenge', updatedAt: Date.now() };
+      return writeFlow(flow) ? readFlow() : null;
+    }
 
     function clearFlow() {
       try { sessionStorage.removeItem(FLOW_KEY); } catch (e) { /* ignore */ }
@@ -3665,9 +3685,15 @@
       try { KitUI.setCfStatus(text, stickyMs); } catch (e) { /* ignore */ }
       if (dotClass) { try { KitUI.setCfDot(dotClass); } catch (e) { /* ignore */ } }
     }
+    function waitForCloudflare() {
+      const flow = ensureCloudflareFlow();
+      if (returnTimer) { clearTimeout(returnTimer); returnTimer = 0; }
+      say('Cloudflare 挑战验证进行中；完成后自动恢复当前页面', 'pause');
+      return !!flow;
+    }
 
     function shieldFailed() {
-      if (isChallengePage()) return false;
+      if (isChallengePage() || isCloudflareInterstitial()) return false;
       const dialog = document.querySelector('.dialog-body');
       if (!dialog) return false;
       const text = dialog.textContent || '';
@@ -3679,7 +3705,7 @@
 
     function planJump(manual) {
       const mode = jumpMode();
-      if (isChallengePage()) return { jump: false, reason: 'on-challenge', mode: mode, url: null };
+      if (isChallengePage() || isCloudflareInterstitial()) return { jump: false, reason: 'on-challenge', mode: mode, url: null };
       const now = Date.now();
       const last = lastJumpAt();
       const since = now - last;
@@ -3769,6 +3795,7 @@
         else say('挑战验证进行中；完成后自动恢复原页面', 'pause');
         return;
       }
+      if (isCloudflareInterstitial()) { waitForCloudflare(); return; }
       if (shieldFailed()) { checkAndJump(); return; }
       if (flow.phase === 'exhausted') {
         say('自动重试已达上限（' + AUTO_RETRY_LIMIT + ' 次），已停止；可手动重试', 'err');
@@ -3791,6 +3818,7 @@
         returnTimer = 0;
         const latest = readFlow();
         if (!latest || isChallengePage()) return;
+        if (isCloudflareInterstitial()) { waitForCloudflare(); return; }
         if (shieldFailed()) { checkAndJump(); return; }
         if (latest.mode === 'challenge' && location.href !== latest.target) {
           startReturnCheck();
@@ -3809,6 +3837,7 @@
 
     function refreshReady() {
       if (isChallengePage()) say(isNotFoundPage() ? '挑战页失效，等待冷却后恢复' : '挑战验证进行中；完成后自动恢复原页面', 'pause');
+      else if (isCloudflareInterstitial()) waitForCloudflare();
       else say('就绪：监听盾拦截提示（' + keywords().length + ' 条关键词）', 'on');
     }
 
@@ -3829,6 +3858,8 @@
       }
       refreshReady();
       if (isNotFoundPage()) backFromNotFound();
+    } else if (isCloudflareInterstitial()) {
+      waitForCloudflare();
     } else {
       const flow = readFlow();
       if (flow) startReturnCheck();
@@ -3845,6 +3876,7 @@
           else say('挑战验证进行中；完成后自动恢复原页面', 'pause');
           return;
         }
+        if (isCloudflareInterstitial()) { waitForCloudflare(); return; }
         if (!checkAndJump() && readFlow()) startReturnCheck();
       });
       MO.observe(document.body, { childList: true, subtree: true, characterData: true });
@@ -3864,6 +3896,7 @@
         if (isNotFoundPage()) backFromNotFound();
         return;
       }
+      if (isCloudflareInterstitial()) { waitForCloudflare(); return; }
       if (!checkAndJump() && readFlow()) startReturnCheck();
     }, 1500);
   }
@@ -4161,7 +4194,7 @@
   // ---------- 测试/调试出口（无副作用） ----------
   try {
     window.__LDB64__ = {
-      version: '2.8.1',                        // 与脚本头 @version 保持同步（供调试与自检读取）
+      version: '2.8.2',                        // 与脚本头 @version 保持同步（供调试与自检读取）
       flags: FLAGS,
       CFG: CFG,
       MANUAL: MANUAL,

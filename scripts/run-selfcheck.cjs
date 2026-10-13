@@ -3,7 +3,7 @@
  * LINUX DO 工具箱离线自检执行器
  * ------------------------------------------------------------------
  * 起本地静态服务，把用户脚本注入 selfcheck.html，再用真实 Chromium 跑原功能和
- * cfShield 挑战等待 / 自动恢复 / 失效冷却 / 同源 redirect / 重试上限场景。
+ * cfShield 独立挑战页 / 同 URL Cloudflare interstitial / 自动恢复 / 冷却 / redirect / 重试上限场景。
  *
  * 用法：  node scripts/run-selfcheck.cjs
  * 可用环境变量：
@@ -112,6 +112,11 @@ async function runScenario(page, url, label) {
     scenarios.push(await runScenario(page,
       `${BASE}/challenge?scenario=cf-wait&redirect=${encodeURIComponent(cfTarget('cf-wait'))}`,
       '过盾：挑战等待、redirect 同源校验'));
+
+    await resetState();
+    scenarios.push(await runScenario(page,
+      `${cfTarget('cf-interstitial')}`,
+      '过盾：原 URL 内嵌 Cloudflare challenge 自动恢复'));
 
     await resetState();
     scenarios.push(await runScenario(page,

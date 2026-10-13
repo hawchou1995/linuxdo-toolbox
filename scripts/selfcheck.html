@@ -140,6 +140,14 @@
       blockedDialog.textContent = '403 error';
       document.body.appendChild(blockedDialog);
     }
+    if (scenario === 'cf-interstitial') {
+      document.title = '請稍候...';
+      window._cf_chl_opt = { cRay: 'offline-cf-ray', cH: 'offline-challenge', cUPMDTk: location.pathname + location.search };
+      var cfResponse = document.createElement('input');
+      cfResponse.type = 'hidden';
+      cfResponse.name = 'cf-turnstile-response';
+      document.body.appendChild(cfResponse);
+    }
   } else if (!scenarioOff) {
     try {
       localStorage.setItem('ldkit.flags.v1', JSON.stringify({
@@ -217,6 +225,32 @@
           String(shield.cfValidateRedirect('https://evil.example/steal')));
         ok('CF④ 挑战页不触发自动跳转决策', !!shield.cfPlanJump(false) && shield.cfPlanJump(false).reason === 'on-challenge',
           JSON.stringify(shield.cfPlanJump(false)));
+        finish();
+        return;
+      }
+
+      if (scenario === 'cf-interstitial') {
+        await sleep(250);
+        var interstitialFlow = shield && shield.cfFlowSnapshot ? shield.cfFlowSnapshot() : null;
+        ok('CF⑫ 原 URL 内嵌的 Cloudflare challenge 被识别为等待态',
+          location.pathname === '/t/xxx/2998304' && !!interstitialFlow && interstitialFlow.target === location.href
+            && /Cloudflare 挑战验证进行中/.test(reportShield())
+            && !!document.querySelector('input[name="cf-turnstile-response"]'),
+          JSON.stringify(interstitialFlow) + ' / ' + reportShield());
+        ok('CF⑬ interstitial 等待时禁止再次跳盾', shield.cfPlanJump(false).reason === 'on-challenge',
+          JSON.stringify(shield.cfPlanJump(false)));
+        delete window._cf_chl_opt;
+        var responseInput = document.querySelector('input[name="cf-turnstile-response"]');
+        if (responseInput) responseInput.remove();
+        document.title = 'Mock topic restored';
+        var readyNode = document.createElement('div');
+        readyNode.id = 'mock-topic-restored';
+        document.body.appendChild(readyNode);
+        await waitFor(function () { return /挑战验证完成，已恢复原页面/.test(reportShield()); }, 8000);
+        ok('CF⑭ interstitial 正常完成后同 URL 自动确认恢复', location.href === interstitialFlow.target
+          && /挑战验证完成，已恢复原页面/.test(reportShield()), location.href + ' / ' + reportShield());
+        ok('CF⑮ interstitial 恢复确认后清除 flow', shield.cfFlowSnapshot() === null,
+          JSON.stringify(shield.cfFlowSnapshot()));
         finish();
         return;
       }
