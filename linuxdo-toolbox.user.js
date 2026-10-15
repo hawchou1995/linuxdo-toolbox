@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LINUX DO 工具箱
 // @namespace    https://linux.do/
-// @version      2.8.3
-// @description  LINUX DO 工具箱：七个功能在右下角面板各自独立开关，名字一律四个汉字 —— ① 密文自解（正文 Base64 就地解码；手动面板支持反向「主动加码」：明文 → Base64）② 原生复制（取 /raw/ 原生 Markdown 并附转载来源）③ 外链解锁（外链免登录可见，强制新标签页）④ 随读回应（跟随阅读随机回应，跳过爱心与 +1）⑤ 已读提速（批量同步已读帖数与阅读时长）⑥ 过盾重试（识别 Cloudflare 挑战页，包含原页面内嵌挑战；验证完成自动恢复原页）⑦ 只看此人（每层楼用户名旁一键只看该用户的帖子，跳过点头像两步，只发过 1 帖的用户也能筛）。面板两级导航：主看板一行一个功能，点进去是它自己的子看板；所有看板宽高统一，切换不跳动；底部另有「一键全默认」。仓库 github.com/hawchow1995/linuxdo-toolbox · 论坛 qingju.me
+// @version      2.9.0
+// @description  LINUX DO 工具箱：七个功能在右下角面板各自独立开关，名字一律四个汉字 —— ① 密文自解（正文自动识别 Base16/Base32/Base58/Base64/Base64URL；面板支持格式选择、自动识别、多层解码与反向加码）② 原生复制（取 /raw/ 原生 Markdown 并附转载来源）③ 外链解锁（外链免登录可见，强制新标签页）④ 随读回应（跟随阅读随机回应，跳过爱心与 +1）⑤ 已读提速（批量同步已读帖数与阅读时长）⑥ 过盾重试（识别 Cloudflare 挑战页，包含原页面内嵌挑战；验证完成自动恢复原页）⑦ 只看此人（每层楼用户名旁一键只看该用户的帖子，跳过点头像两步，只发过 1 帖的用户也能筛）。面板两级导航：主看板一行一个功能，点进去是它自己的子看板；所有看板宽高统一，切换不跳动；底部另有「一键全默认」。仓库 github.com/hawchow1995/linuxdo-toolbox · 论坛 qingju.me
 // @author       牛来 · XAUTHUB · HawChow · Sunwuyuan · adodo · Pipecraft
 // @match        https://linux.do/*
 // @match        https://qingju.me/*
@@ -18,6 +18,12 @@
 // ==/UserScript==
 
 /*
+ * v2.9.0 —— 「密文自解」扩展 Base 编码识别与格式选择：
+ *          ① 支持 Base16、RFC 4648 Base32、Bitcoin 原始 Base58、标准 Base64 与 Base64URL 的字节编解码。
+ *          ② 帖子正文仅在唯一可读文本结果时自动替换；同结果候选合并，不同结果歧义保留原文。
+ *             Base64/Base64URL 共享字母表时归并为 Base64；出现 `-` / `_` 时识别为 Base64URL。
+ *          ③ 手动面板支持 Auto/指定格式解码、混合格式多轮识别和五格式编码；旧 URL-safe 参数自动迁移。
+ *          ④ 离线 Chromium 自检覆盖 codec、歧义、正文扫描、格式往返与参数迁移；Cloudflare 逻辑未变。
  * v2.8.3 —— 扩大 Cloudflare 原 URL 内嵌挑战的回归覆盖：
  *          ① 离线 Chromium 覆盖 `/new`、`/latest`、`/t/...`，验证完整同源 URL（含查询参数）保留并自动确认恢复。
  *          ② 增加验证控件零交互断言；独立 `/challenge`、跨源拒绝、冷却及重试上限继续覆盖。
@@ -264,7 +270,7 @@
   // ================================================================
   // 统一开关：七个功能各自独立开关（写 localStorage，切换后自动刷新生效）
   //   面板上一律使用四个汉字的显示名，不出现任何内部标识或函数名：
-  //   · b64        密文自解   正文 Base64 就地解码 + 手动解码面板
+  //   · b64        密文自解   正文自动识别 Base16/32/58/64/64URL；面板手动解码与格式加码
   //   · mdCopy     原生复制   取 /raw/ 楼层原生 Markdown
   //   · linkUnlock 外链解锁   破解登录可见 + 强制新标签页
   //   · autoReact  随读回应   跟随阅读随机回应（跳过爱心与 +1）
@@ -274,7 +280,7 @@
   // ================================================================
   const FLAGS_KEY = 'ldkit.flags.v1';
   const FLAG_DEFS = [
-    { id: 'b64', label: '密文自解', hint: '自动识别帖子正文里的 Base64 并就地解码；手动面板支持双向互转：密文 → 明文 / 明文 → 密文（主动加码）' },
+    { id: 'b64', label: '密文自解', hint: '正文自动识别 Base16 / Base32 / Base58 / Base64 / Base64URL；手动面板可自动识别或指定格式，双向互转并支持多层解码' },
     { id: 'mdCopy', label: '原生复制', hint: '在每层楼的操作栏加一个按钮，取 /raw/ 原生 Markdown 并附转载来源' },
     { id: 'linkUnlock', label: '外链解锁', hint: '破解 External Link Shield：外链免登录可见，点击强制新标签页且不弹提示' },
     { id: 'autoReact', label: '随读回应', hint: '只对当前可见且未回应的楼层随机回应（跳过爱心与 +1）' },
@@ -298,7 +304,14 @@
       { key: 'maxRounds', label: '解码轮数', type: 'number', min: 1, max: 6, step: 1, def: 2 },
       { key: 'debounceMs', label: '输入延迟ms', type: 'number', min: 0, max: 3000, step: 10, def: 180 },
       { key: 'encRounds', label: '加码层数', type: 'number', min: 1, max: 4, step: 1, def: 1 },
-      { key: 'encUrlSafe', label: 'URL 安全字符', type: 'bool', def: false },
+      {
+        key: 'encFormat', label: '加码格式', type: 'select', def: 'base64',
+        options: [
+          { value: 'base16', label: 'Base16' }, { value: 'base32', label: 'Base32' },
+          { value: 'base58', label: 'Base58' }, { value: 'base64', label: 'Base64' },
+          { value: 'base64url', label: 'Base64URL' }
+        ]
+      },
       { key: 'encWrap', label: '每行字符数(0=不折行)', type: 'number', min: 0, max: 120, step: 4, def: 0 },
       { key: 'encKeepWs', label: '保留换行与空格', type: 'bool', def: true }
     ],
@@ -387,6 +400,15 @@
         }
       }
     }
+    const savedB64 = saved.b64;
+    if (savedB64 && typeof savedB64 === 'object') {
+      const formats = ['base16', 'base32', 'base58', 'base64', 'base64url'];
+      if (savedB64.encFormat === undefined || savedB64.encFormat === null || savedB64.encFormat === '') {
+        out.b64.encFormat = savedB64.encUrlSafe === true ? 'base64url' : 'base64';
+      } else if (formats.indexOf(String(savedB64.encFormat)) < 0) {
+        out.b64.encFormat = 'base64';
+      }
+    }
     return out;
   }
 
@@ -406,7 +428,15 @@
   }
 
   function saveParams(id, patch) {
-    PARAMS[id] = Object.assign({}, getParams(id), patch || {});
+    const changes = patch || {};
+    PARAMS[id] = Object.assign({}, getParams(id), changes);
+    if (id === 'b64') {
+      if (changes.encFormat === 'base64url') PARAMS[id].encUrlSafe = true;
+      else if (changes.encFormat === 'base64') PARAMS[id].encUrlSafe = false;
+      else if (changes.encFormat === undefined && typeof changes.encUrlSafe === 'boolean') {
+        PARAMS[id].encFormat = changes.encUrlSafe ? 'base64url' : 'base64';
+      }
+    }
     persistParams();
     applyParams(id);
     return PARAMS[id];
@@ -583,10 +613,11 @@
   // ---- 「主动加码」（明文 → Base64）的运行时配置（面板参数可调）----
   //   与解码侧完全镜像：多轮、URL 安全字母表、按行折行。
   const ENC = {
-    rounds: 1,            // 加码层数（多轮 = 把上一轮的结果再编一次）
-    urlSafe: false,       // URL 安全字母表（-_ 且不带 =）
-    wrap: 0,              // 每行字符数，0 = 不折行
-    keepWhitespace: true  // 保留原样换行与空格（false = 编码前先合并掉所有空白）
+    format: 'base64',      // 明文编码格式
+    rounds: 1,             // 加码层数（多轮 = 把上一轮的结果再编一次）
+    urlSafe: false,        // 兼容旧 encUrlSafe 参数
+    wrap: 0,               // 每行字符数，0 = 不折行
+    keepWhitespace: true   // 保留原样换行与空格（false = 编码前先合并掉所有空白）
   };
   // 面板参数 → 本模块运行时配置（启动时调一次；「保存参数 / 恢复默认」时再调）
   // 面板参数 → 本模块运行时配置（启动时调一次；「保存参数 / 恢复默认」时再调）
@@ -596,9 +627,11 @@
     if (typeof p.minDecoded === 'number' && p.minDecoded >= 1) CFG.minDecoded = Math.floor(p.minDecoded);
     if (typeof p.maxRounds === 'number' && p.maxRounds >= 1) CFG.maxRounds = Math.floor(p.maxRounds);
     if (typeof p.debounceMs === 'number' && p.debounceMs >= 0) CFG.debounceMs = Math.floor(p.debounceMs);
-    // 「主动加码」侧
     if (typeof p.encRounds === 'number') ENC.rounds = Math.max(1, Math.min(4, Math.floor(p.encRounds) || 1));
-    ENC.urlSafe = !!p.encUrlSafe;
+    let format = typeof p.encFormat === 'string' ? p.encFormat : (p.encUrlSafe ? 'base64url' : 'base64');
+    if (['base16', 'base32', 'base58', 'base64', 'base64url'].indexOf(format) < 0) format = p.encUrlSafe ? 'base64url' : 'base64';
+    ENC.format = format;
+    ENC.urlSafe = format === 'base64url';
     if (typeof p.encWrap === 'number' && p.encWrap >= 0) ENC.wrap = Math.floor(p.encWrap);
     ENC.keepWhitespace = p.encKeepWs !== false;
   }
@@ -616,6 +649,7 @@
     deepMinLen: 8,       // 继续下钻的最短长度：低于此值视为已到最终明文，不再二次解码
     segMinLen: 8,        // 分段尝试的最短长度（避免把正文里的短词误当成 base64 片段）
     maxRounds: 3,        // 多轮下钻（二次/三次编码）
+    decodeFormat: 'auto', // 面板手动解码格式；每轮下钻随后自动识别
     mode: 'dec'          // 手动面板方向：'dec' 密文→明文 / 'enc' 明文→密文（面板上可切）
   };
   const UI_HOST_ID = 'ldb64-manual-host';
@@ -654,21 +688,48 @@
     return printable / chars.length >= 0.9;
   }
 
-  function decodeOnce(str) {
-    const t = normalizeB64(str);
-    if (!t) return null;
-    let bin;
-    try { bin = atob(t); } catch (e) { return null; }
-    let out;
-    try {
-      out = new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(bin, c => c.charCodeAt(0)));
-    } catch (e) { return null; }                            // 严格 UTF-8 校验，滤掉二进制噪声
-    if (!out || out.length < CFG.minDecoded) return null;
-    if (!isPrintable(out)) return null;                     // 可打印比例过滤
-    return out;
+  const BASE_FORMATS = ['base64', 'base64url', 'base16', 'base32', 'base58'];
+  const BASE_FORMAT_LABELS = {
+    base16: 'Base16', base32: 'Base32', base58: 'Base58', base64: 'Base64', base64url: 'Base64URL'
+  };
+
+  function detectBaseCandidates(input, options) {
+    const opts = options || {};
+    const wanted = opts.format || 'auto';
+    const formats = wanted === 'auto' ? BASE_FORMATS : (BASE_FORMATS.indexOf(wanted) >= 0 ? [wanted] : []);
+    const compact = String(input == null ? '' : input).replace(WS_RE, '');
+    if (!compact || !formats.length) return [];
+    const minDecoded = Number.isFinite(Number(opts.minDecoded)) ? Math.max(1, Number(opts.minDecoded)) : MANUAL.minDecoded;
+    const candidates = [];
+
+    formats.forEach(function (format) {
+      const bytes = decodeBaseBytes(format, compact);
+      if (bytes == null) return;
+      let text, lossy = false;
+      try {
+        text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      } catch (e) {
+        if (!opts.allowLossy) return;
+        try { text = new TextDecoder('utf-8').decode(bytes); lossy = true; } catch (e2) { return; }
+      }
+      if (!text || text.length < minDecoded || !isPrintable(text)) return;
+
+      const candidate = { format: format, label: BASE_FORMAT_LABELS[format], text: text, lossy: lossy };
+      const same = candidates.findIndex(function (item) { return item.text === text; });
+      if (same < 0) candidates.push(candidate);
+      else if (candidates[same].lossy && !lossy) candidates[same] = candidate;
+    });
+    return candidates;
   }
 
-  // 二次解码是否值得继续：上一轮结果必须仍「像一段 base64 载荷」且不是最终产物
+  function decodeOnce(str) {
+    const compact = String(str == null ? '' : str).replace(WS_RE, '');
+    if (compact.length < CFG.minLen) return null;
+    const candidates = detectBaseCandidates(compact, { format: 'auto', allowLossy: false, minDecoded: CFG.minDecoded });
+    return candidates.length === 1 ? candidates[0].text : null;
+  }
+
+  // 二次解码是否值得继续：上一轮结果必须仍「像一段 Base 载荷」且不是最终产物
   function canDeepDecode(d) {
     if (!d || d.length < CFG.minLen) return false;
     if (!B64ISH_RE.test(d)) return false;                   // 含空白/中文/标点 -> 已是最终文本
@@ -676,14 +737,15 @@
     return true;
   }
 
-  // 返回最终展示文本；完全没有解码成功则返回 null
+  // 返回最终展示文本；完全没有解码成功或出现不同文本歧义则返回 null
   function resolveText(token) {
     let cur = String(token == null ? '' : token), changed = false;
     for (let i = 0; i < CFG.maxRounds; i++) {
+      if (i === 0 && cur.replace(WS_RE, '').length < CFG.minLen) break;
       if (i > 0 && !canDeepDecode(cur)) break;
-      const d = decodeOnce(cur);
-      if (d == null || d === cur) break;
-      cur = d; changed = true;
+      const candidates = detectBaseCandidates(cur, { format: 'auto', allowLossy: false, minDecoded: CFG.minDecoded });
+      if (candidates.length !== 1 || candidates[0].text === cur) break;
+      cur = candidates[0].text; changed = true;
     }
     return changed ? cur : null;
   }
@@ -750,7 +812,7 @@
     if (decoded == null) return false;
     span.dataset.decoded = decoded;
     span.classList.remove('ld-b64-raw');
-    span.title = '点击查看原文（Base64）';
+    span.title = '点击查看原文（Base 编码）';
     span.style.whiteSpace = '';
     span.textContent = '';
 
@@ -1034,74 +1096,86 @@
     return s;
   }
 
-  // 手动模式单轮解码：阈值更宽松，UTF-8 严格失败时退回宽松解码并标记 lossy
-  function manualDecodeOnce(str, allowLossy) {
-    let t = String(str == null ? '' : str).replace(WS_RE, '');
-    t = t.replace(/-/g, '+').replace(/_/g, '/');            // Base64URL 归一化
-    t = t.replace(/=+$/, '');
-    if (t.length < MANUAL.minLen) return null;
-    if (!BODY_RE.test(t)) return null;
-    if (t.length % 4 === 1) return null;
-    while (t.length % 4) t += '=';
-
-    let bin;
-    try { bin = atob(t); } catch (e) { return null; }
-    const bytes = Uint8Array.from(bin, function (c) { return c.charCodeAt(0); });
-
-    let strictOk = true;
-    let out = null;
-    try {
-      out = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-    } catch (e) {
-      if (!allowLossy) return null;                         // 下钻轮次只接受严格 UTF-8，避免把明文再解成乱码
-      strictOk = false;
-      try { out = new TextDecoder('utf-8').decode(bytes); } catch (e2) { return null; }
-    }
-    if (!out || out.length < MANUAL.minDecoded) return null;
-    if (!isPrintable(out)) return null;
-    return { text: out, lossy: !strictOk };
+  // 手动模式单轮解码：保留首轮宽松 UTF-8 回退，并返回唯一文本候选。
+  function manualDecodeOnce(str, allowLossy, format) {
+    const compact = String(str == null ? '' : str).replace(WS_RE, '');
+    if (compact.length < MANUAL.minLen) return null;
+    const candidates = detectBaseCandidates(compact, {
+      format: format || 'auto', allowLossy: !!allowLossy, minDecoded: MANUAL.minDecoded
+    });
+    if (candidates.length !== 1) return null;
+    return candidates[0];
   }
 
-  // 手动模式多轮解码（应对二次编码）
-  function manualDecode(str) {
-    let cur = String(str == null ? '' : str);
-    let best = null, rounds = 0, lossy = false;
-    for (let i = 0; i < MANUAL.maxRounds; i++) {
-      const r = manualDecodeOnce(cur, i === 0);             // 仅第 1 轮允许有损解码
-      if (!r || r.text === cur) break;
-      best = r.text; rounds++;
-      if (r.lossy) { lossy = true; break; }                 // 有损结果不再继续下钻
-      const compact = r.text.replace(WS_RE, '');
-      if (!(compact.length >= MANUAL.deepMinLen && B64ISH_RE.test(compact))) break;   // 已是最终明文（短串不再下钻）
-      if (DEEP_SKIP_RE.test(r.text)) break;                 // URL / 密钥
-      cur = r.text;
-    }
-    if (best == null) return null;
-    return { text: best, rounds: rounds, lossy: lossy };
+  // 返回一个结果或歧义结果数组；每个路径的后续层都重新自动识别。
+  function manualDecode(str, format) {
+    const raw = String(str == null ? '' : str);
+    if (raw.replace(WS_RE, '').length < MANUAL.minLen) return null;
+    const initial = detectBaseCandidates(raw, {
+      format: format || 'auto', allowLossy: true, minDecoded: MANUAL.minDecoded
+    });
+    if (!initial.length) return null;
+
+    const results = [];
+    initial.forEach(function (first) {
+      let cur = first.text, lossy = first.lossy;
+      const formats = [first.format];
+      for (let i = 1; i < MANUAL.maxRounds; i++) {
+        if (lossy) break;
+        const compact = cur.replace(WS_RE, '');
+        if (!(compact.length >= MANUAL.deepMinLen && B64ISH_RE.test(compact))) break;
+        if (DEEP_SKIP_RE.test(cur)) break;
+        const next = detectBaseCandidates(cur, { format: 'auto', allowLossy: false, minDecoded: MANUAL.minDecoded });
+        if (next.length !== 1 || next[0].text === cur) break;
+        cur = next[0].text;
+        formats.push(next[0].format);
+      }
+      const result = {
+        text: cur, rounds: formats.length, lossy: lossy,
+        format: formats[0], formats: formats.slice()
+      };
+      const same = results.findIndex(function (item) { return item.text === result.text; });
+      if (same < 0) results.push(result);
+      else if (results[same].lossy && !result.lossy) results[same] = result;
+    });
+    return results.length === 1 ? results[0] : results;
   }
 
-  // 对外主入口：整串优先，失败后按「非 base64 字符」切分逐段尝试
-  function decodeManualInput(raw) {
+  // 对外主入口：整串优先，失败后按编码字母表并集切分逐段尝试。
+  function decodeManualInput(raw, format) {
     const cleaned = cleanInput(raw);
     const flat = cleaned.replace(WS_RE, '');
     if (!flat) return { ok: false, reason: 'empty' };
+    const selectedFormat = format || MANUAL.decodeFormat || 'auto';
+    const formatPathLabel = function (item) {
+      return (item.formats || [item.format]).map(function (f) { return BASE_FORMAT_LABELS[f] || f; }).join(' → ');
+    };
+    const makeSegments = function (items, prefix) {
+      const list = Array.isArray(items) ? items : [items];
+      return list.map(function (item) {
+        return {
+          label: prefix + ' · ' + formatPathLabel(item),
+          text: item.text, rounds: item.rounds, lossy: item.lossy,
+          format: item.format, formats: item.formats || [item.format]
+        };
+      });
+    };
 
-    const whole = manualDecode(flat);
+    const whole = manualDecode(flat, selectedFormat);
     if (whole) {
-      return { ok: true, segments: [{ label: '整串', text: whole.text, rounds: whole.rounds, lossy: whole.lossy }] };
+      const segments = makeSegments(whole, '整串');
+      return { ok: true, segments: segments, ambiguous: segments.length > 1 };
     }
 
     const segs = cleaned.split(/[^A-Za-z0-9+/=_\-\s]+/)
       .map(function (s) { return s.replace(WS_RE, ''); })
       .filter(function (s) { return s.length >= MANUAL.segMinLen; });
-
     const found = [];
     segs.forEach(function (seg, i) {
-      const d = manualDecode(seg);
-      if (d) found.push({ label: '第 ' + (i + 1) + ' 段', text: d.text, rounds: d.rounds, lossy: d.lossy });
+      const decoded = manualDecode(seg, selectedFormat);
+      if (decoded) found.push.apply(found, makeSegments(decoded, '第 ' + (i + 1) + ' 段'));
     });
-    if (found.length) return { ok: true, segments: found, partial: true };
-
+    if (found.length) return { ok: true, segments: found, partial: true, ambiguous: found.length > 1 };
     return { ok: false, reason: 'not-b64' };
   }
 
@@ -1148,6 +1222,152 @@
     return out;
   }
 
+  const BASE32_AB = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const BASE58_AB = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+  function asByteArray(value) {
+    if (value instanceof Uint8Array) return value;
+    if (value instanceof ArrayBuffer) return new Uint8Array(value);
+    if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    if (Array.isArray(value) && value.every(function (n) { return Number.isInteger(n) && n >= 0 && n <= 255; })) {
+      return Uint8Array.from(value);
+    }
+    return null;
+  }
+
+  function decodeBase64Bytes(encoded, urlSafe) {
+    const value = String(encoded == null ? '' : encoded).replace(WS_RE, '');
+    const alphabetOk = urlSafe ? /^[A-Za-z0-9_-]*={0,2}$/.test(value) : /^[A-Za-z0-9+/]*={0,2}$/.test(value);
+    if (!alphabetOk) return null;
+    const data = value.replace(/=+$/, '');
+    const padding = value.length - data.length;
+    const remainder = data.length % 4;
+    if (remainder === 1) return null;
+    if (padding && (value.length % 4 !== 0 || remainder === 0 || 4 - remainder !== padding)) return null;
+
+    const alphabet = urlSafe ? 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_' : B64_AB;
+    const out = [];
+    let acc = 0, bits = 0;
+    for (let i = 0; i < data.length; i++) {
+      const digit = alphabet.indexOf(data[i]);
+      if (digit < 0) return null;
+      acc = (acc << 6) | digit;
+      bits += 6;
+      if (bits >= 8) {
+        bits -= 8;
+        out.push((acc >> bits) & 255);
+        acc &= (1 << bits) - 1;
+      }
+    }
+    if (bits && acc !== 0) return null;
+    return Uint8Array.from(out);
+  }
+
+  function decodeBase32Bytes(encoded) {
+    const value = String(encoded == null ? '' : encoded).replace(WS_RE, '').toUpperCase();
+    if (!/^[A-Z2-7]*={0,6}$/.test(value)) return null;
+    const data = value.replace(/=+$/, '');
+    const padding = value.length - data.length;
+    const remainder = data.length % 8;
+    const requiredPadding = { 0: 0, 2: 6, 4: 4, 5: 3, 7: 1 }[remainder];
+    if (requiredPadding === undefined) return null;
+    if (padding && (value.length % 8 !== 0 || padding !== requiredPadding)) return null;
+
+    const out = [];
+    let acc = 0, bits = 0;
+    for (let i = 0; i < data.length; i++) {
+      const digit = BASE32_AB.indexOf(data[i]);
+      if (digit < 0) return null;
+      acc = (acc << 5) | digit;
+      bits += 5;
+      if (bits >= 8) {
+        bits -= 8;
+        out.push((acc >> bits) & 255);
+        acc &= (1 << bits) - 1;
+      }
+    }
+    if (bits && acc !== 0) return null;
+    return Uint8Array.from(out);
+  }
+
+  function decodeBase58Bytes(encoded) {
+    const value = String(encoded == null ? '' : encoded).replace(WS_RE, '');
+    if (!/^[1-9A-HJ-NP-Za-km-z]*$/.test(value)) return null;
+    let number = 0n;
+    for (let i = 0; i < value.length; i++) {
+      number = number * 58n + BigInt(BASE58_AB.indexOf(value[i]));
+    }
+    const body = [];
+    while (number > 0n) {
+      body.push(Number(number & 255n));
+      number >>= 8n;
+    }
+    body.reverse();
+    let zeroes = 0;
+    while (zeroes < value.length && value[zeroes] === '1') zeroes++;
+    return Uint8Array.from(new Array(zeroes).fill(0).concat(body));
+  }
+
+  function encodeBase32Bytes(bytes) {
+    let out = '', acc = 0, bits = 0;
+    for (let i = 0; i < bytes.length; i++) {
+      acc = (acc << 8) | bytes[i];
+      bits += 8;
+      while (bits >= 5) {
+        bits -= 5;
+        out += BASE32_AB[(acc >> bits) & 31];
+        acc &= (1 << bits) - 1;
+      }
+    }
+    if (bits) out += BASE32_AB[(acc << (5 - bits)) & 31];
+    while (out.length % 8) out += '=';
+    return out;
+  }
+
+  function encodeBase58Bytes(bytes) {
+    let number = 0n;
+    for (let i = 0; i < bytes.length; i++) number = (number << 8n) | BigInt(bytes[i]);
+    let body = '';
+    while (number > 0n) {
+      const digit = Number(number % 58n);
+      body = BASE58_AB[digit] + body;
+      number /= 58n;
+    }
+    let zeroes = 0;
+    while (zeroes < bytes.length && bytes[zeroes] === 0) zeroes++;
+    return '1'.repeat(zeroes) + body;
+  }
+
+  function decodeBaseBytes(format, encoded) {
+    try {
+      const value = String(encoded == null ? '' : encoded).replace(WS_RE, '');
+      if (format === 'base16') {
+        if (!/^(?:[0-9A-Fa-f]{2})*$/.test(value)) return null;
+        const out = new Uint8Array(value.length / 2);
+        for (let i = 0; i < value.length; i += 2) out[i / 2] = parseInt(value.slice(i, i + 2), 16);
+        return out;
+      }
+      if (format === 'base32') return decodeBase32Bytes(value);
+      if (format === 'base58') return decodeBase58Bytes(value);
+      if (format === 'base64') return decodeBase64Bytes(value, false);
+      if (format === 'base64url') return decodeBase64Bytes(value, true);
+      return null;
+    } catch (e) { return null; }
+  }
+
+  function encodeBaseBytes(format, input) {
+    const bytes = asByteArray(input);
+    if (!bytes) return null;
+    try {
+      if (format === 'base16') return Array.from(bytes, function (b) { return b.toString(16).padStart(2, '0'); }).join('').toUpperCase();
+      if (format === 'base32') return encodeBase32Bytes(bytes);
+      if (format === 'base58') return encodeBase58Bytes(bytes);
+      if (format === 'base64') return bytesToB64(bytes, false, true);
+      if (format === 'base64url') return bytesToB64(bytes, true, false);
+      return null;
+    } catch (e) { return null; }
+  }
+
   // 每行 n 个字符折行（0 或 n < 8 = 不折行）
   function wrapLines(str, n) {
     if (!n || n < 8 || str.length <= n) return str;
@@ -1166,18 +1386,23 @@
     const rounds = Math.max(1, Math.min(4, Math.floor(ENC.rounds) || 1));
     const plainBytes = utf8Bytes(text).length;
     let cur = text;
-    for (let i = 0; i < rounds; i++) cur = bytesToB64(utf8Bytes(cur), ENC.urlSafe, !ENC.urlSafe);
-    const out = wrapLines(cur, ENC.wrap);      // 折行与字母表无关：URL 安全串同样可以折行（解码侧会把空白剥掉）
+    for (let i = 0; i < rounds; i++) {
+      const encoded = encodeBaseBytes(ENC.format, utf8Bytes(cur));
+      if (encoded == null) return { ok: false, reason: 'encode' };
+      cur = encoded;
+    }
+    const out = wrapLines(cur, ENC.wrap);
 
     return {
       ok: true,
       plainBytes: plainBytes,
       plainChars: text.length,
       segments: [{
-        label: '明文 → Base64' + (rounds > 1 ? '（连续加码 ' + rounds + ' 层）' : ''),
+        label: '明文 → ' + BASE_FORMAT_LABELS[ENC.format] + (rounds > 1 ? '（连续加码 ' + rounds + ' 层）' : ''),
         text: out,
         rounds: 1,
-        lossy: false
+        lossy: false,
+        format: ENC.format
       }]
     };
   }
@@ -1332,6 +1557,10 @@
       '.mode-sw .mode-btn { flex: 1; border: 0; background: var(--field); color: var(--fg-2); font: inherit; font-size: 11px; padding: 4px 6px; cursor: pointer; }',
       '.mode-sw .mode-btn + .mode-btn { border-left: 1px solid var(--field-line); }',
       '.mode-sw .mode-btn[aria-pressed="true"] { background: var(--btn); color: var(--btn-fg); }',
+      '.format-row { display: flex; align-items: center; gap: 8px; }',
+      '.format-row > span { min-width: 64px; font-size: 11px; color: var(--fg-2); }',
+      '.format-select { flex: 1; min-width: 0; border: 1px solid var(--field-line); border-radius: 7px; padding: 5px 8px; background: var(--field); color: var(--fg); font: inherit; font-size: 11px; }',
+      '.format-select:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }',
       '.mini, .go {',
       '  appearance: none; font: inherit; font-size: 12px; line-height: 1.3; cursor: pointer;',
       '  border-radius: 7px; padding: 4px 10px; border: 1px solid var(--btn-2-line);',
@@ -1405,7 +1634,7 @@
       '<button type="button" class="mini" data-cfg-reset-all="1" title="把七个功能的参数全部恢复为出厂默认值">一键全默认</button>',
       '<span class="hint">参数改动即时生效，不用刷新</span>',
       '<div class="about">',
-      '<span class="ab-name">LINUX DO 工具箱 v2.8.3</span>',
+      '<span class="ab-name">LINUX DO 工具箱 v2.9.0</span>',
       '<a class="ab-link" href="https://github.com/hawchou1995/linuxdo-toolbox" target="_blank" rel="noopener noreferrer">GitHub 仓库</a>',
       '<a class="ab-link" href="https://qingju.me/" target="_blank" rel="noopener noreferrer">qingju.me 论坛</a>',
       '<span class="ab-note">源码开源 · 欢迎来青橘（qingju.me）一起折腾</span>',
@@ -1552,16 +1781,25 @@
         b.setAttribute('aria-pressed', String((b.getAttribute('data-act') === 'mode-enc') === enc));
       });
       const go = root.querySelector('[data-act="decode"]');
-      if (go) go.textContent = enc ? '加密' : '解码';
+      if (go) go.textContent = enc ? '加码' : '解码';
       const hint = root.querySelector('.b64-hint');
-      if (hint) hint.textContent = enc ? '输入即加码，Ctrl+Enter 立即' : '输入即解码，Ctrl+Enter 立即';
+      if (hint) hint.textContent = enc ? '输入即按所选格式加码，Ctrl+Enter 立即' : '输入即按所选格式解码，Ctrl+Enter 立即';
+      const formatSelect = root.querySelector('.format-select');
+      if (formatSelect) {
+        Array.prototype.forEach.call(formatSelect.options, function (option) {
+          const auto = option.value === 'auto';
+          option.hidden = enc && auto;
+          option.disabled = enc && auto;
+        });
+        formatSelect.value = enc ? ENC.format : (MANUAL.decodeFormat || 'auto');
+      }
       if (ta) {
         ta.placeholder = enc
-          ? '输入要加码的明文：中文 / emoji / 换行都行，输出 Base64 密文'
-          : '粘贴 Base64：可被空格换行拆散、夹带说明文字、带引号或代码围栏';
+          ? '输入要加码的明文：中文 / emoji / 换行都行，输出所选 Base 格式'
+          : '粘贴 Base 载荷：可被空格换行拆散、夹带说明文字，或带引号/代码围栏';
       }
       if (!(ta && ta.value.trim())) { out.hidden = true; out.textContent = ''; return; }
-      runDecode();                                   // 已输入的内容按新方向立刻重算
+      runDecode();
     }
 
     function renderResult(res) {
@@ -1574,7 +1812,7 @@
           ? (MANUAL.mode === 'enc' ? '请输入要加码的明文。' : '请输入要解码的内容。')
           : (MANUAL.mode === 'enc'
             ? '加码失败：输入为空，或编码过程出了意外。'
-            : '未能解码：这不是有效的 Base64，或解码结果不是可读文本。');
+            : '未能解码：载荷格式无效或结果不是可读文本。');
         out.appendChild(err);
         return;
       }
@@ -1629,7 +1867,7 @@
       if (timer) { clearTimeout(timer); timer = null; }
       const val = ta.value;
       if (!val.trim()) { out.hidden = true; out.textContent = ''; return; }
-      renderResult(MANUAL.mode === 'enc' ? encodeManualInput(val) : decodeManualInput(val));
+      renderResult(MANUAL.mode === 'enc' ? encodeManualInput(val) : decodeManualInput(val, MANUAL.decodeFormat));
     }
     KitUI.b64Rerun = runDecode;     // 面板挂载后的出口：参数改动时按当前方向立刻重算
     function scheduleDecode() {
@@ -1744,7 +1982,13 @@
         '<button type="button" class="mode-btn" data-act="mode-dec" aria-pressed="true">密文 → 明文</button>',
         '<button type="button" class="mode-btn" data-act="mode-enc" aria-pressed="false">明文 → 密文</button>',
         '</div>',
-        '<textarea class="ta" rows="4" spellcheck="false" placeholder="粘贴 Base64：可被空格换行拆散、夹带说明文字、带引号或代码围栏"></textarea>',
+        '<label class="format-row"><span>Base 格式</span><select class="format-select" aria-label="Base 格式">',
+        '<option value="auto" selected>自动识别</option>',
+        '<option value="base16">Base16</option><option value="base32">Base32</option>',
+        '<option value="base58">Base58</option><option value="base64">Base64</option>',
+        '<option value="base64url">Base64URL</option>',
+        '</select></label>',
+        '<textarea class="ta" rows="4" spellcheck="false" placeholder="粘贴 Base 载荷：可被空格换行拆散、夹带说明文字，或带引号/代码围栏"></textarea>',
         '<div class="row-btns">',
         '<button type="button" class="go" data-act="decode">解码</button>',
         '<button type="button" class="mini" data-act="paste">粘贴</button>',
@@ -2047,6 +2291,20 @@
     ta = root.querySelector('.ta');
     out = root.querySelector('.out');
     if (ta) ta.addEventListener('input', scheduleDecode);
+    const formatSelect = root.querySelector('.format-select');
+    if (formatSelect) formatSelect.addEventListener('change', function () {
+      const format = formatSelect.value;
+      if (MANUAL.mode === 'enc') {
+        if (format === 'auto') return;
+        const patch = { encFormat: format };
+        if (format === 'base64url') patch.encUrlSafe = true;
+        else if (format === 'base64') patch.encUrlSafe = false;
+        saveParams('b64', patch);
+      } else {
+        MANUAL.decodeFormat = format || 'auto';
+        runDecode();
+      }
+    });
 
 
     // 参数折叠区：把当前参数写回输入框
@@ -2061,6 +2319,16 @@
           else inp.value = String(p[k]);
         });
       });
+      const formatSelect = root.querySelector('.format-select');
+      if (formatSelect) {
+        const enc = MANUAL.mode === 'enc';
+        Array.prototype.forEach.call(formatSelect.options, function (option) {
+          const auto = option.value === 'auto';
+          option.hidden = enc && auto;
+          option.disabled = enc && auto;
+        });
+        formatSelect.value = enc ? ENC.format : (MANUAL.decodeFormat || 'auto');
+      }
     }
     KitUI.syncParams = function (id) { syncParamInputs(id); };
 
@@ -4198,7 +4466,7 @@
   // ---------- 测试/调试出口（无副作用） ----------
   try {
     window.__LDB64__ = {
-      version: '2.8.3',                        // 与脚本头 @version 保持同步（供调试与自检读取）
+      version: '2.9.0',                        // 与脚本头 @version 保持同步（供调试与自检读取）
       flags: FLAGS,
       CFG: CFG,
       MANUAL: MANUAL,
@@ -4207,7 +4475,8 @@
       HIDDEN_SEL: HIDDEN_SEL,
       normalizeB64: normalizeB64,
       decodeOnce: decodeOnce,
-      canDeepDecode: canDeepDecode,
+      detectBaseCandidates: detectBaseCandidates,
+      baseCodecs: { decodeBytes: decodeBaseBytes, encodeBytes: encodeBaseBytes },
       resolveText: resolveText,
       getPref: getPref,
       setPref: setPref,
@@ -4224,6 +4493,8 @@
       manualDecodeOnce: manualDecodeOnce,
       manualDecode: manualDecode,
       decodeManualInput: decodeManualInput,
+      encodeManualInput: encodeManualInput,
+      loadParams: loadParams,
       initReadBoost: initReadBoost,
       initCloudShield: initCloudShield,
       initOnlyUser: initOnlyUser,

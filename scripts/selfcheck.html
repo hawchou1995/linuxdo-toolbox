@@ -348,6 +348,82 @@
     var posts = all('.topic-post');
     var K = window.__LDB64__ && window.__LDB64__.readBoost;
 
+    // Base codec 与自动识别回归（共用真实脚本调试出口）
+    var LD = window.__LDB64__;
+    var codecs = LD && LD.baseCodecs;
+    var decodeBytesText = function (format, input) {
+      if (!codecs) return null;
+      var decoded = codecs.decodeBytes(format, input);
+      if (decoded == null) return null;
+      try { return new TextDecoder('utf-8', { fatal: true }).decode(decoded); } catch (e) { return null; }
+    };
+    var utf8Fixture = function (text) { return new TextEncoder().encode(text); };
+    ok('Base codec 调试出口存在', !!codecs && typeof codecs.decodeBytes === 'function' && typeof codecs.encodeBytes === 'function');
+    ok('Base16 Hello 固定向量', decodeBytesText('base16', '48656C6C6F') === 'Hello');
+    ok('Base32 Hello 固定向量', decodeBytesText('base32', 'JBSWY3DP') === 'Hello');
+    ok('Base64 Hello 固定向量', decodeBytesText('base64', 'SGVsbG8=') === 'Hello');
+    ok('Base58 保留两个前导零字节', !!codecs && codecs.encodeBytes('base58', Uint8Array.of(0, 0)) === '11'
+      && Array.from(codecs.decodeBytes('base58', '11') || []).join(',') === '0,0');
+    ok('Base58 文本字节往返', !!codecs && decodeBytesText('base58', codecs.encodeBytes('base58', utf8Fixture('Base58 fixture'))) === 'Base58 fixture');
+    ok('Base58 拒绝非法字母', !!codecs && codecs.decodeBytes('base58', '0OIl') === null);
+    ok('Base16 拒绝奇数位载荷', !!codecs && codecs.decodeBytes('base16', 'ABC') === null);
+    ok('Base64URL 无 padding 往返', !!codecs && codecs.encodeBytes('base64url', Uint8Array.of(251, 255)) === '-_8'
+      && Array.from(codecs.decodeBytes('base64url', '-_8') || []).join(',') === '251,255');
+    ok('Base64/Base64URL 相同文本候选合并并保留旧自动解码', !!LD && typeof LD.detectBaseCandidates === 'function'
+      && LD.detectBaseCandidates('SGVsbG8=', { format: 'auto', allowLossy: false, minDecoded: 1 }).length === 1
+      && LD.detectBaseCandidates('SGVsbG8=', { format: 'auto', allowLossy: false, minDecoded: 1 })[0].format === 'base64'
+      && LD.resolveText('SGVsbG8gd29ybGQ=') === 'Hello world');
+    var oldAutoMinLen = LD.CFG.minLen;
+    LD.CFG.minLen = 17;
+    var minLenPreserved = LD.resolveText('SGVsbG8gd29ybGQ=') === null && LD.decodeOnce('SGVsbG8gd29ybGQ=') === null;
+    LD.CFG.minLen = oldAutoMinLen;
+    ok('自动解码与兼容 decodeOnce 保留 CFG.minLen 门槛', minLenPreserved);
+    var urlSafeReadable = codecs ? codecs.encodeBytes('base64url', utf8Fixture('你好，LINUX DO 🎉')) : '';
+    ok('Base64URL 专用字符触发 Base64URL 识别', !!LD && typeof LD.detectBaseCandidates === 'function'
+      && /[-_]/.test(urlSafeReadable)
+      && LD.detectBaseCandidates(urlSafeReadable, { format: 'auto', allowLossy: false, minDecoded: 1 }).some(function (c) { return c.format === 'base64url' && c.text === '你好，LINUX DO 🎉'; }));
+    if (LD && LD.CFG) {
+      var savedMinLen = LD.CFG.minLen, savedMinDecoded = LD.CFG.minDecoded;
+      LD.CFG.minLen = 1; LD.CFG.minDecoded = 1;
+      var ambiguityCandidates = typeof LD.detectBaseCandidates === 'function'
+        ? LD.detectBaseCandidates('3456265A2645', { format: 'auto', allowLossy: false, minDecoded: 1 }) : [];
+      ok('不同结果的 Base16/Base64 碰撞保留为歧义', ambiguityCandidates.length >= 2 && LD.resolveText('3456265A2645') === null,
+        'candidates=' + ambiguityCandidates.length);
+      var mixedPlain = 'Mixed Base layers fixture';
+      var mixedInner = codecs.encodeBytes('base58', utf8Fixture(mixedPlain));
+      var mixedOuter = codecs.encodeBytes('base64', utf8Fixture(mixedInner));
+      var mixedResult = LD.decodeManualInput(mixedOuter, 'auto');
+      ok('混合 Base64→Base58 多层解码恢复原文', !!mixedResult.ok && mixedResult.segments.length === 1
+        && mixedResult.segments[0].text === mixedPlain && mixedResult.segments[0].rounds === 2,
+        mixedResult.ok ? mixedResult.segments[0].label : mixedResult.reason);
+      ok('帖子自动多轮 resolver 逐层识别混合格式', LD.resolveText(mixedOuter) === mixedPlain);
+      var manualCollision = LD.decodeManualInput('3456265A26452409', 'auto');
+      ok('手动 Auto 将不同结果歧义展开为可选候选', !!manualCollision.ok && manualCollision.ambiguous === true
+        && manualCollision.segments.length > 1 && manualCollision.segments.some(function (s) { return s.format === 'base16'; })
+        && manualCollision.segments.some(function (s) { return s.format === 'base64'; }),
+        manualCollision.ok ? manualCollision.segments.map(function (s) { return s.label; }).join(' | ') : manualCollision.reason);
+    var scanPlain = 'Base58 unique scan fixture';
+    var scanToken = codecs ? codecs.encodeBytes('base58', utf8Fixture(scanPlain)) : '';
+    var scanCandidates = LD && typeof LD.detectBaseCandidates === 'function'
+      ? LD.detectBaseCandidates(scanToken, { format: 'auto', allowLossy: false, minDecoded: 5 }) : [];
+    var savedScanMinLen = LD.CFG.minLen, savedScanMinDecoded = LD.CFG.minDecoded;
+    LD.CFG.minLen = 16; LD.CFG.minDecoded = 5;
+    var scanRoot = document.createElement('div');
+    scanRoot.className = 'cooked';
+    scanRoot.textContent = scanToken;
+    LD.processCooked(scanRoot);
+    ok('帖子正文唯一 Base58 候选自动解码', scanCandidates.length === 1 && scanCandidates[0].format === 'base58'
+      && !!scanRoot.querySelector('.ld-b64') && scanRoot.querySelector('.ld-b64').dataset.decoded === scanPlain);
+    var collisionScanToken = '3456265A26452409';
+    var collisionRoot = document.createElement('div');
+    collisionRoot.className = 'cooked';
+    collisionRoot.textContent = collisionScanToken;
+    LD.processCooked(collisionRoot);
+    ok('帖子正文不同结果歧义保持原文', LD.detectBaseCandidates(collisionScanToken, { format: 'auto', allowLossy: false, minDecoded: 5 }).length > 1
+      && collisionRoot.textContent === collisionScanToken && !collisionRoot.querySelector('.ld-b64'));
+    LD.CFG.minLen = savedScanMinLen; LD.CFG.minDecoded = savedScanMinDecoded;
+      LD.CFG.minLen = savedMinLen; LD.CFG.minDecoded = savedMinDecoded;
+    } else ok('不同结果的 Base16/Base64 碰撞保留为歧义', false, 'CFG export missing');
     // ① 位置
     ok('① 每层楼都长出「只看此人」按钮', posts.length === 5 && posts.every(function (p) { return !!p.querySelector('.ldkit-onlyuser'); }),
       'topic-post=' + posts.length + ' buttons=' + all('.ldkit-onlyuser').length);
@@ -451,45 +527,91 @@
       const goBtn = sh.querySelector('[data-act="decode"]');
       const taEl = sh.querySelector('.ta');
       const outEl = sh.querySelector('.out');
+      const formatSelect = sh.querySelector('.format-select');
       const bodyOf = function () { const s = outEl.querySelector('.seg-body'); return s ? s.textContent : ''; };
+      const tagOf = function () { const s = outEl.querySelector('.seg-tag'); return s ? s.textContent : ''; };
       const run = async function (text) {
         taEl.value = text;
         taEl.dispatchEvent(new Event('input', { bubbles: true }));
         await sleep(420);
         return bodyOf();
       };
+      const chooseFormat = async function (format) {
+        formatSelect.value = format;
+        formatSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        await sleep(30);
+      };
 
+      ok('⑨a 解码方向默认格式为 Auto', !!formatSelect && formatSelect.value === 'auto', formatSelect && formatSelect.value);
       modeEnc.click();
-      ok('⑨b 切到加码方向：两个方向按钮的 aria-pressed 与 Go 按钮文案都对',
-        modeEnc.getAttribute('aria-pressed') === 'true' && modeDec.getAttribute('aria-pressed') === 'false' && goBtn.textContent === '加密',
-        modeEnc.getAttribute('aria-pressed') + '/' + modeDec.getAttribute('aria-pressed') + '/' + goBtn.textContent);
+      ok('⑨b 切到加码方向：aria-pressed、按钮文案及默认 Base64 正确',
+        modeEnc.getAttribute('aria-pressed') === 'true' && modeDec.getAttribute('aria-pressed') === 'false'
+          && goBtn.textContent === '加码' && formatSelect.value === 'base64',
+        modeEnc.getAttribute('aria-pressed') + '/' + modeDec.getAttribute('aria-pressed') + '/' + goBtn.textContent + '/' + formatSelect.value);
 
       const PLAIN = '你好，LINUX DO 🎉\n第二行：https://linux.do/t/2998304';
-      const enc1 = await run(PLAIN);
-      ok('⑨c 明文 → 密文：产出纯 Base64 字母表（中文/emoji 没把编码器搞挂）',
-        enc1.length > 0 && /^[A-Za-z0-9+/=\n]+$/.test(enc1) && enc1.indexOf('你好') < 0, enc1.slice(0, 60));
-      ok('⑨d 输出块自带「复制」按钮', !!outEl.querySelector('.seg-hd .mini'));
+      const FORMAT_CASES = [
+        { id: 'base16', label: 'Base16', re: /^[0-9A-F\n]+$/ },
+        { id: 'base32', label: 'Base32', re: /^[A-Z2-7=\n]+$/ },
+        { id: 'base58', label: 'Base58', re: /^[1-9A-HJ-NP-Za-km-z\n]+$/ },
+        { id: 'base64', label: 'Base64', re: /^[A-Za-z0-9+/=\n]+$/ },
+        { id: 'base64url', label: 'Base64URL', re: /^[A-Za-z0-9_\-\n]+$/ }
+      ];
+      for (const spec of FORMAT_CASES) {
+        await chooseFormat(spec.id);
+        const encoded = await run(PLAIN);
+        const encodedTag = tagOf();
+        ok('⑨c ' + spec.label + ' 输出字母表与格式标签正确', encoded.length > 0 && spec.re.test(encoded)
+          && encodedTag.indexOf(spec.label) >= 0, encodedTag + ' / ' + encoded.slice(0, 44));
+        if (spec.id === 'base64url') ok('⑨c2 Base64URL Unicode 载荷使用 -/_ 且不补等号', /[-_]/.test(encoded) && !/=/.test(encoded), encoded.slice(0, 60));
+        ok('⑨d ' + spec.label + ' 格式保存到 encFormat', window.__LDB64__.getParams('b64').encFormat === spec.id,
+          window.__LDB64__.getParams('b64').encFormat);
+        if (spec.id === 'base64url') ok('⑨e Base64URL 同步旧 encUrlSafe=true', window.__LDB64__.getParams('b64').encUrlSafe === true);
+        if (spec.id === 'base64') ok('⑨f Base64 同步旧 encUrlSafe=false', window.__LDB64__.getParams('b64').encUrlSafe === false);
+
+        modeDec.click();
+        await chooseFormat(spec.id);
+        const decoded = await run(encoded);
+        const decodedTag = tagOf();
+        ok('⑨g ' + spec.label + ' 指定格式往返保持中文/emoji/换行', decoded === PLAIN, JSON.stringify(decoded.slice(0, 60)));
+        ok('⑨h ' + spec.label + ' 解码结果标题注明格式', decodedTag.indexOf(spec.label) >= 0, decodedTag);
+        ok('⑨i 解码输出块保留复制按钮', !!outEl.querySelector('.seg-hd .mini'));
+        modeEnc.click();
+      }
 
       modeDec.click();
-      const dec1 = await run(enc1.replace(/\s+/g, ''));
-      ok('⑨e 往返一致：编出来的密文解回来 === 原明文（含中文 / emoji / 换行）', dec1 === PLAIN, JSON.stringify(dec1.slice(0, 70)));
-
-      // 参数：URL 安全字母表 + 每行 8 字符折行 + 2 层加码
-      window.__LDB64__.saveParams('b64', { encUrlSafe: true, encWrap: 8, encRounds: 2 });
+      await chooseFormat('auto');
+      const collisionOutput = await run(collisionScanToken);
+      const visibleCollisionTags = Array.from(outEl.querySelectorAll('.seg-tag')).map(function (el) { return el.textContent; }).join(' | ');
+      ok('⑨i2 手动 Auto 将 Base16/Base64 歧义都显示为候选', outEl.querySelectorAll('.seg').length > 1
+        && /Base16/.test(visibleCollisionTags) && /Base64/.test(visibleCollisionTags), visibleCollisionTags || collisionOutput);
       modeEnc.click();
-      const enc2 = await run('ABCDEF1234567890');
-      ok('⑨f URL 安全字母表：输出不含 + / =', !/[+/=]/.test(enc2), enc2.slice(0, 60));
-      ok('⑨g 按行折行：每行不超过 8 字符且确有换行',
-        enc2.indexOf('\n') >= 0 && enc2.split('\n').every(function (l) { return l.length <= 8; }), JSON.stringify(enc2));
-      const tag2 = outEl.querySelector('.seg-tag');
-      ok('⑨h 加码层数=2：标签写明「连续加码 2 层」', !!tag2 && /连续加码 2 层/.test(tag2.textContent), tag2 ? tag2.textContent : 'n/a');
+      const beforeLegacy = localStorage.getItem('ldkit.params.v1');
+      localStorage.setItem('ldkit.params.v1', JSON.stringify({ b64: { encUrlSafe: true } }));
+      const legacyUrlFormat = window.__LDB64__.loadParams().b64.encFormat;
+      localStorage.setItem('ldkit.params.v1', JSON.stringify({ b64: { encUrlSafe: false } }));
+      const legacyStdFormat = window.__LDB64__.loadParams().b64.encFormat;
+      if (beforeLegacy === null) localStorage.removeItem('ldkit.params.v1');
+      else localStorage.setItem('ldkit.params.v1', beforeLegacy);
+      ok('⑨j 旧参数 encUrlSafe=true 迁移为 Base64URL', legacyUrlFormat === 'base64url', legacyUrlFormat);
+      ok('⑨k 旧参数 encUrlSafe=false 迁移为 Base64', legacyStdFormat === 'base64', legacyStdFormat);
 
+      window.__LDB64__.saveParams('b64', { encFormat: 'base64url', encUrlSafe: true, encWrap: 8, encRounds: 2 });
+      const enc2 = await run('你好，LINUX DO 🎉');
+      const tag2 = tagOf();
+      ok('⑨l 两层 Base64URL 只用 URL-safe 字母表', !/[+/=]/.test(enc2), enc2.slice(0, 64));
+      ok('⑨m 按行折行：每行不超过 8 字符且确有换行',
+        enc2.indexOf('\n') >= 0 && enc2.split('\n').every(function (line) { return line.length <= 8; }), JSON.stringify(enc2));
+      ok('⑨n 两层编码标签标出 Base64URL 与层数', /Base64URL/.test(tag2) && /连续加码 2 层/.test(tag2), tag2);
       modeDec.click();
+      await chooseFormat('base64url');
       const dec2 = await run(enc2.replace(/\s+/g, ''));
-      ok('⑨i 两层 + URL 安全 + 折行的输出：解回来仍是原明文', dec2 === 'ABCDEF1234567890', JSON.stringify(dec2.slice(0, 60)));
+      ok('⑨o 两层 Base64URL 解码往返保持原文', dec2 === '你好，LINUX DO 🎉', JSON.stringify(dec2));
 
       window.__LDB64__.resetParams('b64');
+      ok('⑨p 参数重置恢复 Base64', window.__LDB64__.getParams('b64').encFormat === 'base64', window.__LDB64__.getParams('b64').encFormat);
       modeEnc.click();
+      ok('⑨q 重置后加码方向选择器回显 Base64', formatSelect.value === 'base64', formatSelect.value);
     }
 
     finish();
