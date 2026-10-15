@@ -82,7 +82,8 @@ function startServer() {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-    fs.createReadStream(PAGE).pipe(res);
+    if (url.pathname.endsWith('.json')) { res.end('{}'); return; }
+    fs.createReadStream(['/filter-selfcheck', '/filter-persist'].includes(url.pathname) ? path.join(ROOT, 'scripts', 'content-filter-selfcheck.html') : PAGE).pipe(res);
   });
   return new Promise((resolve) => server.listen(PORT, '127.0.0.1', () => resolve(server)));
 }
@@ -157,6 +158,9 @@ async function runScenario(page, url, label) {
     scenarios.push(await runScenario(page,
       `${cfTarget('cf-retry')}`,
       '过盾：拦截失败后自动重试次数封顶'));
+    await resetState();
+    scenarios.push(await runScenario(page, `${BASE}/filter-selfcheck`, '内容过滤：匹配、Worker、面板、动态与恢复'));
+    scenarios.push(await runScenario(page, `${BASE}/filter-persist`, '内容过滤：刷新持久化'));
   } finally {
     await page.close();
     await ctx.close();

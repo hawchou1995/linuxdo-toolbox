@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>内容过滤专项自检</title></head><body>
+<pre id="report">running</pre><div id="fixture"></div>
+<script>
+(async function () {
+  'use strict';
+  const results = [], sleep = ms => new Promise(r => setTimeout(r, ms));
+  const ok = (name, value, detail) => results.push({ name, ok: !!value, detail: detail == null ? '' : String(detail) });
+  const fixture = document.querySelector('#fixture');
+  const flags = { b64: false, mdCopy: false, linkUnlock: false, autoReact: false, readBoost: false, cfShield: false, onlyUser: false };
+  const finish = () => { document.querySelector('#report').textContent = JSON.stringify(results); window.__SELFCHECK_RESULTS__ = results; window.__SELFCHECK_DONE__ = true; };
+  try {
+    if (location.pathname !== '/filter-persist') { localStorage.clear(); sessionStorage.clear(); }
+    localStorage.setItem('ldkit.flags.v1', JSON.stringify(flags));
+    const script = document.createElement('script'); script.textContent = await (await fetch('/linuxdo-toolbox.user.js')).text(); document.body.appendChild(script);
+    await sleep(150);
+    const LD = window.__LDB64__, F = LD.contentFilter, sh = document.querySelector('#ldb64-manual-host').shadowRoot;
+    if (location.pathname === '/filter-persist') {
+      ok('PERSIST 重新加载后规则数恢复', F.getConfig().rules.length === 2);
+      ok('PERSIST 重新加载后 JSON 可校验', F.validate(localStorage.getItem(F.KEY)).ok);
+      ok('PERSIST 重新加载后面板回显配置', JSON.parse(sh.querySelector('.cf-json').value).rules.length === 2);
+      finish(); return;
+    }
+    ok('FILTER01 默认关闭且原七项开关保留', LD.flags.contentFilter === false && Object.keys(flags).every(k => LD.flags[k] === flags[k]));
+    ok('FILTER02 面板仅一个统一入口且有规则面板', sh.querySelectorAll('[data-tab="contentFilter"]').length === 1 && !!sh.querySelector('.cf-panel'));
+    const config = (...rules) => ({version:1,spam:{enabled:false,maxChars:30,rules:[]},rules});
+    const rule = (target, field, op, value, flags) => ({id:'test',name:'合成测试',enabled:true,target,conditions:[{field,op,value,...(flags ? {flags} : {})}]});
+    const item = {kind:'topic',topicId:'100',title:'Alpha discussion',author:'starter',userId:'8',tags:['tech','news'],category:'技术',categoryId:'4'};
+    for (const [label,r,input,hit] of [
+      ['话题标题关键词忽略大小写',rule('topic','title','keyword','ALPHA'),item,true],
+      ['标题未命中',rule('topic','title','keyword','beta'),item,false],
+      ['话题 ID',rule('topic','topicId','exact','100'),item,true],
+      ['标签精确成员',rule('topic','tags','exact','tech'),item,true],
+      ['标签不默认子串',rule('topic','tags','exact','tec'),item,false],
+      ['标签关键词',rule('topic','tags','keyword','TEC'),item,true],
+      ['标签正则',rule('topic','tags','regex','^ne.s$'),item,true],
+      ['类别精确',rule('topic','category','exact','技术'),item,true],
+      ['类别关键词',rule('topic','category','keyword','术'),item,true],
+      ['类别正则',rule('topic','category','regex','^技'),item,true],
+      ['类别 ID',rule('topic','categoryId','exact','4'),item,true],
+      ['子类别 ID 不继承',rule('topic','categoryId','exact','4'),{...item,categoryId:'41'},false],
+      ['字段缺失不命中',rule('topic','tags','regex','.*'),{kind:'topic',title:'x'},false],
+      ['空标题不命中通配正则',rule('topic','title','regex','.*'),{kind:'topic',title:''},false],
+      ['空白正文不命中',rule('post','body','regex','.*'),{kind:'post',body:'   '},false],
+      ['超长正文保留可见而非截断匹配',rule('post','body','regex','x$'),{kind:'post',body:'x'.repeat(20001)},false],
+      ['帖子正文',rule('post','body','keyword','HELLO'),{kind:'post',body:'Hello world'},true],
+      ['帖子 ID',rule('post','postId','exact','18'),{kind:'post',postId:'18'},true],
+      ['帖子作者',rule('post','author','exact','Alice'),{kind:'post',author:'alice'},true],
+      ['帖子话题标题',rule('post','title','regex','Alpha'),{kind:'post',title:item.title},true],
+      ['用户规则影响作者帖子',rule('user','author','exact','starter'),{kind:'post',author:'starter'},true],
+      ['用户规则影响发起话题',rule('user','userId','exact','8'),item,true],
+      ['不因提及屏蔽用户命中',rule('user','author','exact','starter'),{kind:'post',author:'other',body:'@starter'},false],
+      ['不因最近回复者命中',rule('user','author','exact','last'),{...item,lastPoster:'last'},false]
+    ]) { const c=config(r); ok('MATCH '+label,F.validate(c).ok && !!(await F.evaluate([input],c))[0] === hit); }
+    for (const flags of ['g','y','ig','imy']) {
+      const c=config(rule('topic','title','regex','Alpha',flags));
+      const r=await F.evaluate([item,item,item],c);
+      ok('REGEX '+flags+' 无 lastIndex 漂移', r.length === 3 && r.every(Boolean));
+    }
+    const andRule=rule('topic','title','keyword','Alpha'); andRule.conditions.push({field:'tags',op:'exact',value:'other'});
+    ok('COMBO 单规则 AND', !(await F.evaluate([item],config(andRule)))[0]);
+    const second=rule('topic','categoryId','exact','4');second.id='second';
+    ok('COMBO 多规则 OR', !!(await F.evaluate([item],config(andRule,second)))[0]);
+    second.enabled=false;
+    ok('COMBO 停用规则不生效', !(await F.evaluate([item],config(second)))[0]);
+    const invalids=[config({...andRule,conditions:[]}),config(rule('topic','body','keyword','x')),config(rule('user','tags','exact','x')),config(rule('topic','title','regex','[')),config(rule('topic','topicId','keyword','1')),config(rule('post','body','keyword','')),config(rule('topic','title','regex','x','ii')),config(rule('topic','title','regex','x','z'))];
+    const good=config(rule('topic','title','keyword','valid')); F.save(good);
+    const before=localStorage.getItem(F.KEY);
+    invalids.forEach((c,i)=>ok('VALIDATION 非法配置 '+i+' 不覆盖旧规则',!F.save(c).ok && localStorage.getItem(F.KEY) === before));
+    ok('IMPORT 损坏 JSON 不覆盖有效规则',!F.save('{').ok && localStorage.getItem(F.KEY)===before);
+    ok('VALIDATION 原型链对象拒绝且提示明确', /对象必须/.test(F.validate(config({...andRule,target:'constructor'})).error));
+    ok('PERSIST 已保存配置可校验并恢复',F.validate(JSON.parse(before)).ok && F.getConfig().rules[0].conditions[0].value==='valid');
+    const timeoutConfig=config(rule('post','body','regex','^(a+)+$'));
+    let timedOut=false;const start=performance.now();try {await F.evaluate([{kind:'post',body:'a'.repeat(10000)+'!'}],timeoutConfig);}catch(e){timedOut=/超时/.test(e.message);}
+    ok('RESOURCE 灾难正则被 Worker 超时终止',timedOut && performance.now()-start<3000);
+    let limited=false;try{await F.evaluate(Array(31).fill(item),config());}catch(e){limited=/资源/.test(e.message);}
+    ok('RESOURCE 批次限额生效',limited);
+    const NativeWorker=window.Worker;window.Worker=function(){throw Error('CSP test');};let csp=false;
+    try{await F.evaluate([item],config());}catch(e){csp=/创建失败/.test(e.message);}finally{window.Worker=NativeWorker;}
+    ok('RESOURCE CSP 创建失败可见报错',csp);
+    const spam=F.defaults();
+    const basePost={kind:'post',body:'谢谢！',postNumber:2,protected:false};
+    for(const [label,p,expected] of [['短语命中',basePost,true],['非水贴短回复',{...basePost,body:'错误码是 403'},false],['首帖保护',{...basePost,postNumber:1},false],['结构保护',{...basePost,protected:true},false],['超过门槛',{...basePost,body:'谢谢'.repeat(40)},false]]) {
+      ok('SPAM '+label,!!(await F.evaluate([p],spam))[0]===expected);
+    }
+    const explicit=config(rule('post','body','keyword','谢谢'));
+    ok('SPAM 显式规则不受首帖结构保护限制',!!(await F.evaluate([{...basePost,postNumber:1,protected:true}],explicit))[0]);
+    const postHTML=(n,body,user='alice',id=String(700+n))=>'<div class="topic-post" data-post-number="'+n+'"><article data-post-id="'+id+'" data-user-id="8" id="post_'+n+'"><div class="topic-meta-data"><div class="names"><a data-user-card="'+user+'">'+user+'</a></div></div><div class="cooked">'+body+'</div></article></div>';
+    fixture.innerHTML=postHTML(1,'谢谢')+postHTML(2,'谢谢')+postHTML(3,'错误码是 403')+postHTML(4,'<a href="/x">谢谢</a>')+postHTML(5,'<code>谢谢</code>')+postHTML(6,'<blockquote>谢谢</blockquote>')+postHTML(7,'谢谢<img alt="fixture">')+postHTML(8,'谢谢<span class="attachment">附件</span>');
+    const idProbe = document.createElement('div'); idProbe.innerHTML = postHTML(20, '内容'); idProbe.querySelector('article').removeAttribute('data-post-id');
+    ok('DOM 楼层号不冒充数据库帖子 ID', F.collect(idProbe)[0].item.postId === null);
+    F.save(spam);F.setEnabled(true);await sleep(800);
+    ok('DOM 水贴仅折叠无保护回复',fixture.querySelectorAll('.ldkit-filter-folded').length===1);
+    const post2=fixture.querySelector('[data-post-number="2"]'),placeholder=post2.querySelector(':scope > .ldkit-filter-placeholder');
+    ok('DOM 原内容与节点均保留',post2.querySelector('.cooked').textContent==='谢谢' && placeholder.classList.contains('ldkit-filter-placeholder'));
+    placeholder.querySelector('button').click();await sleep(1700);
+    ok('DOM 临时展开跨重扫仍保持',!post2.classList.contains('ldkit-filter-folded'));
+    placeholder.querySelector('button').click();ok('DOM 可重新折叠',post2.classList.contains('ldkit-filter-folded'));
+    await F.scan();ok('DOM 幂等不重复占位',fixture.querySelectorAll('.ldkit-filter-placeholder').length===1);
+    post2.classList.remove('ldkit-filter-folded');await sleep(600);ok('DYNAMIC 宿主覆写 class 后属性仍保持隐藏',post2.getAttribute('data-ldkit-filter-folded')==='1'&&getComputedStyle(post2.querySelector('article')).display==='none'&&getComputedStyle(post2).display!=='none'&&getComputedStyle(placeholder).display!=='none');
+    placeholder.remove();await F.scan();ok('DYNAMIC 宿主移除占位后恢复入口自修复',post2.querySelectorAll(':scope > .ldkit-filter-placeholder').length===1);
+    post2.querySelector('.cooked').textContent='提供实际修复方案';await sleep(600);
+    ok('DYNAMIC 已折叠内容更新后不命中恢复',!post2.classList.contains('ldkit-filter-folded')&&!fixture.querySelector('.ldkit-filter-placeholder'));
+    fixture.insertAdjacentHTML('beforeend',postHTML(9,'mark'));await sleep(600);
+    ok('DYNAMIC 新增节点自动过滤',fixture.querySelector('[data-post-number="9"]').classList.contains('ldkit-filter-folded'));
+    const p9=fixture.querySelector('[data-post-number="9"]');p9.querySelector('.cooked').textContent='不应被误伤';p9.querySelector('article').dataset.postId='900';await sleep(600);
+    ok('DYNAMIC 复用节点身份内容更新重判',!p9.classList.contains('ldkit-filter-folded'));
+    F.save(config(rule('post','userId','exact','8')));await sleep(600);
+    ok('DOM 用户 ID 对九条作者回复生效',fixture.querySelectorAll('.ldkit-filter-folded').length===9, fixture.querySelectorAll('.ldkit-filter-folded').length);
+    F.save(config());await sleep(500);ok('DOM 删除规则立即恢复',fixture.querySelectorAll('.ldkit-filter-folded').length===0);
+    F.save(config(rule('post','author','exact','alice')));await sleep(500);F.setEnabled(false);
+    ok('DOM 关总开关同步恢复全部内容',fixture.querySelectorAll('.ldkit-filter-placeholder,.ldkit-filter-folded').length===0);
+    fixture.innerHTML='<table><tbody><tr class="topic-list-item" data-topic-id="100"><td><a class="raw-topic-link" href="/t/test/100">Alpha</a><span class="discourse-tags"><a>tech</a></span><span data-category-id="4" class="category-name">技术</span></td><td class="posters"><a data-user-card="starter"></a><a data-user-card="last"></a></td></tr></tbody></table>';
+    F.save(config(rule('topic','tags','exact','tech')));F.setEnabled(true);await sleep(600);
+    const row=fixture.querySelector('.topic-list-item');
+    ok('LIST 标签命中生成合法 TR 占位',row.classList.contains('ldkit-filter-folded')&&row.previousElementSibling.tagName==='TR'&&!!row.previousElementSibling.querySelector('td button'));
+    const snap=F.collect(fixture)[0].item;
+    ok('LIST 作者仅取发起者而非最后回复者',snap.author==='starter');
+    row.querySelector('.discourse-tags a').textContent='news';await sleep(600);
+    ok('LIST 标签未命中恢复列表项',!row.classList.contains('ldkit-filter-folded'));
+    row.querySelector('.discourse-tags').remove();F.save(config(rule('topic','tags','regex','.*')));await sleep(500);
+    ok('LIST 元数据缺失保留可见',!row.classList.contains('ldkit-filter-folded'));
+    row.querySelector('td').insertAdjacentHTML('beforeend','<span class="discourse-tags"><a>new</a></span>');await sleep(600);
+    ok('LIST 元数据补齐后重判',row.classList.contains('ldkit-filter-folded'));
+    history.pushState({},'', '/t/test/100');F.save(config(rule('topic','topicId','exact','100')));
+    fixture.innerHTML='<div id="topic-title"><h1>合成话题</h1></div><div class="post-stream">'+postHTML(1,'首帖仍可恢复')+'</div>';await sleep(2000);
+    const stream=fixture.querySelector('.post-stream');
+    ok('TOPIC 直接打开显示原因和展开入口而非跳走',stream.classList.contains('ldkit-filter-folded')&&!!stream.previousElementSibling.querySelector('button')&&location.pathname==='/t/test/100');
+    stream.previousElementSibling.querySelector('button').click();ok('TOPIC 直接话题可展开',!stream.classList.contains('ldkit-filter-folded'));
+    history.pushState({},'', '/latest');fixture.textContent='';await sleep(1800);
+    ok('SPA 离开话题清除旧折叠占位',!document.querySelector('.ldkit-filter-placeholder'));
+    const nativeFetch=window.fetch;let fetchCount=0;
+    window.fetch=(url,opts)=> {if(String(url).startsWith('/t/777.json')){fetchCount++;if(fetchCount===1)return new Promise((resolve,reject)=>opts.signal.addEventListener('abort',()=>reject(Error('aborted'))));return Promise.resolve({ok:true,text:async()=>JSON.stringify({id:777,title:'fixture',details:{created_by:{id:88,username:'metadata_author'}}})});}return nativeFetch(url,opts);};
+    history.pushState({},'', '/t/test/777');fixture.innerHTML='<div class="post-stream"></div>';await sleep(1700);
+    F.setEnabled(false);F.setEnabled(true);await sleep(1900);
+    ok('METADATA 关闭中断后重开同路由重取',fetchCount===2&&F.collect(fixture)[0].item.author==='metadata_author');
+    window.fetch=nativeFetch;
+    window.dispatchEvent(new StorageEvent('storage',{key:'ldkit.flags.v1',newValue:JSON.stringify({...flags,contentFilter:false})}));
+    ok('STORAGE 跨页开关与面板同步',!LD.flags.contentFilter&&!sh.querySelector('[data-flag="contentFilter"]').checked);
+    history.pushState({},'', '/latest');fixture.textContent='';
+    F.setEnabled(false);F.save(config());
+    const panel=sh.querySelector('.cf-panel');panel.querySelector('.cf-add').click();
+    const editor=panel.querySelector('.cf-editor');editor.querySelector('[aria-label="规则名称"]').value='可视编辑测试';
+    const fieldChoice=editor.querySelector('[aria-label="匹配字段"]');fieldChoice.value='tags';fieldChoice.dispatchEvent(new Event('change'));
+    ok('UI 标签默认精确成员',editor.querySelector('[aria-label="匹配方式"]').value==='exact');
+    const categoryChoice=editor.querySelector('[aria-label="匹配字段"]');categoryChoice.value='category';categoryChoice.dispatchEvent(new Event('change'));
+    ok('UI 类别默认精确名称',editor.querySelector('[aria-label="匹配方式"]').value==='exact');
+    const val=editor.querySelector('[aria-label="匹配值"]');val.value='alpha';val.dispatchEvent(new Event('input'));
+    editor.querySelector('.go').click();
+    ok('UI 可视新建规则保存',F.getConfig().rules.length===1&&F.getConfig().rules[0].name==='可视编辑测试');
+    const ruleLine=Array.from(panel.querySelectorAll('.cf-rule-list > div')).find(el=>el.textContent.includes('可视编辑测试'));
+    ruleLine.querySelector('input').click();ok('UI 可视启停规则',F.getConfig().rules[0].enabled===false);
+    const newLine=Array.from(panel.querySelectorAll('.cf-rule-list > div')).find(el=>el.textContent.includes('可视编辑测试'));
+    Array.from(newLine.querySelectorAll('button')).find(el=>el.textContent==='删除').click();ok('UI 可视删除规则',F.getConfig().rules.length===0);
+    F.save(config(rule('topic','title','regex','alpha','i')));panel.querySelector('.cf-rule-list button').click();
+    const op=panel.querySelector('[aria-label="匹配方式"]');op.value='keyword';op.dispatchEvent(new Event('change'));panel.querySelector('.cf-editor .go').click();
+    ok('UI 正则改关键词自动清 flags 可保存',F.getConfig().rules[0].conditions[0].op==='keyword'&&!F.getConfig().rules[0].conditions[0].flags);
+    F.save(config());
+    panel.querySelector('.cf-example').click();const example=panel.querySelector('.cf-json').value;
+    ok('UI 示例可校验且不自动保存',F.validate(example).ok&&F.getConfig().rules.length===0);
+    panel.querySelector('.cf-import').click();ok('UI 示例可实际导入',F.getConfig().rules.length===2);
+    const old=localStorage.getItem(F.KEY);panel.querySelector('.cf-json').value='{';panel.querySelector('.cf-import').click();
+    ok('UI 导入错误可见且有效配置不变',panel.querySelector('.cf-message').textContent.includes('未保存')&&localStorage.getItem(F.KEY)===old);
+    ok('UI 规则持久化 JSON 可导出往返',F.validate(JSON.parse(old)).ok);
+    F.setEnabled(false);finish();
+  } catch(e) {ok('专项自检异常',false,e.stack||e.message);finish();}
+})();
+</script></body></html>

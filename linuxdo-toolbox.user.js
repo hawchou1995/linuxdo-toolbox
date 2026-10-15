@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LINUX DO 工具箱
 // @namespace    https://linux.do/
-// @version      2.9.0
-// @description  LINUX DO 工具箱：七个功能在右下角面板各自独立开关，名字一律四个汉字 —— ① 密文自解（正文自动识别 Base16/Base32/Base58/Base64/Base64URL；面板支持格式选择、自动识别、多层解码与反向加码）② 原生复制（取 /raw/ 原生 Markdown 并附转载来源）③ 外链解锁（外链免登录可见，强制新标签页）④ 随读回应（跟随阅读随机回应，跳过爱心与 +1）⑤ 已读提速（批量同步已读帖数与阅读时长）⑥ 过盾重试（识别 Cloudflare 挑战页，包含原页面内嵌挑战；验证完成自动恢复原页）⑦ 只看此人（每层楼用户名旁一键只看该用户的帖子，跳过点头像两步，只发过 1 帖的用户也能筛）。面板两级导航：主看板一行一个功能，点进去是它自己的子看板；所有看板宽高统一，切换不跳动；底部另有「一键全默认」。仓库 github.com/hawchow1995/linuxdo-toolbox · 论坛 qingju.me
+// @version      2.10.0
+// @description  LINUX DO 工具箱：八个四字功能独立开关——密文自解（Base16/Base32/Base58/Base64/Base64URL）、原生复制、外链解锁、随读回应、已读提速、过盾重试、只看此人、内容过滤（短文本水贴预设与话题/帖子/用户规则，默认关闭，仅本地可恢复折叠）。统一两级面板，保留原七项配置。仓库 github.com/hawchou1995/linuxdo-toolbox · 论坛 qingju.me
 // @author       牛来 · XAUTHUB · HawChow · Sunwuyuan · adodo · Pipecraft
 // @match        https://linux.do/*
 // @match        https://qingju.me/*
@@ -18,6 +18,10 @@
 // ==/UserScript==
 
 /*
+ * v2.10.0 —— 新增统一「内容过滤」（默认关闭）：
+ *           水贴预设与话题／帖子／用户规则共用入口；AND/OR、精确/关键词/正则、导入导出。
+ *           保留原 DOM，可展开／重新折叠，关闭恢复；Worker 正则超时保护，不改变已读提速任务。
+ *
  * v2.9.0 —— 「密文自解」扩展 Base 编码识别与格式选择：
  *          ① 支持 Base16、RFC 4648 Base32、Bitcoin 原始 Base58、标准 Base64 与 Base64URL 的字节编解码。
  *          ② 帖子正文仅在唯一可读文本结果时自动替换；同结果候选合并，不同结果歧义保留原文。
@@ -268,7 +272,7 @@
   'use strict';
 
   // ================================================================
-  // 统一开关：七个功能各自独立开关（写 localStorage，切换后自动刷新生效）
+  // 统一开关：八个功能独立持久化；内容过滤即时生效，其余沿用原有语义。
   //   面板上一律使用四个汉字的显示名，不出现任何内部标识或函数名：
   //   · b64        密文自解   正文自动识别 Base16/32/58/64/64URL；面板手动解码与格式加码
   //   · mdCopy     原生复制   取 /raw/ 楼层原生 Markdown
@@ -280,6 +284,7 @@
   // ================================================================
   const FLAGS_KEY = 'ldkit.flags.v1';
   const FLAG_DEFS = [
+    { id: 'contentFilter', label: '内容过滤', hint: '统一管理水贴预设与话题、帖子、用户屏蔽规则；本地可恢复折叠，默认关闭' },
     { id: 'b64', label: '密文自解', hint: '正文自动识别 Base16 / Base32 / Base58 / Base64 / Base64URL；手动面板可自动识别或指定格式，双向互转并支持多层解码' },
     { id: 'mdCopy', label: '原生复制', hint: '在每层楼的操作栏加一个按钮，取 /raw/ 原生 Markdown 并附转载来源' },
     { id: 'linkUnlock', label: '外链解锁', hint: '破解 External Link Shield：外链免登录可见，点击强制新标签页且不弹提示' },
@@ -288,7 +293,7 @@
     { id: 'cfShield', label: '过盾重试', hint: 'Cloudflare 盾验证失败时自动跳回盾页重试；盾页失效则按 redirect 或首页兜底' },
     { id: 'onlyUser', label: '只看此人', hint: '在每层楼用户名右侧加一键按钮，直接调 Discourse 官方的 postStream.filterParticipant（与「点用户卡片→点话题中的 N 个帖子」同一个动作）；只有 1 帖的用户也能筛' }
   ];
-  const FLAG_DEFAULTS = { b64: true, mdCopy: true, linkUnlock: true, autoReact: true, readBoost: true, cfShield: true, onlyUser: true };
+  const FLAG_DEFAULTS = { contentFilter: false, b64: true, mdCopy: true, linkUnlock: true, autoReact: true, readBoost: true, cfShield: true, onlyUser: true };
 
   function flagLabel(id) {
     for (const d of FLAG_DEFS) if (d.id === id) return d.label;
@@ -1631,10 +1636,10 @@
       '<div class="mods" id="kit-flags"></div>',
       '<div class="subs" id="kit-subs" hidden></div>',
       '<div class="pfoot">',
-      '<button type="button" class="mini" data-cfg-reset-all="1" title="把七个功能的参数全部恢复为出厂默认值">一键全默认</button>',
+      '<button type="button" class="mini" data-cfg-reset-all="1" title="恢复原七项参数；私人内容过滤规则保持不变">一键全默认</button>',
       '<span class="hint">参数改动即时生效，不用刷新</span>',
       '<div class="about">',
-      '<span class="ab-name">LINUX DO 工具箱 v2.9.0</span>',
+      '<span class="ab-name">LINUX DO 工具箱 v2.10.0</span>',
       '<a class="ab-link" href="https://github.com/hawchou1995/linuxdo-toolbox" target="_blank" rel="noopener noreferrer">GitHub 仓库</a>',
       '<a class="ab-link" href="https://qingju.me/" target="_blank" rel="noopener noreferrer">qingju.me 论坛</a>',
       '<span class="ab-note">源码开源 · 欢迎来青橘（qingju.me）一起折腾</span>',
@@ -1976,6 +1981,7 @@
 
     // ---- 一个功能一页：标签栏 + 每功能独立视图（开关 / 参数 / 状态 / 动作都在各自页里） ----
     const VIEW_HTML = {
+      contentFilter: '<div class="pad cf-panel"></div>',
       b64: [
         '<div class="pad">',
         '<div class="mode-sw" role="group" aria-label="方向">',
@@ -2034,8 +2040,9 @@
       ].join('\n')
     };
 
-    // ---- 七个功能的内联图标（描边 SVG，随主题与状态色变化；不引图标字体 / CDN） ----
+    // ---- 八个功能的内联图标（不引图标字体 / CDN） ----
     const ICONS = {
+      contentFilter: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 4h18l-7 9v6l-4 2v-8z"/></svg>',
       b64: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.4" width="15" height="9.6" rx="2.6"/><path d="M8.2 10.4V8.2a3.8 3.8 0 0 1 7.2-1.9"/><circle cx="12" cy="15.2" r="1.1" fill="currentColor" stroke="none"/></svg>',
       mdCopy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.4"/><path d="M15.4 5.5H6.6a2.4 2.4 0 0 0-2.4 2.4v8.8"/></svg>',
       linkUnlock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10.6 5.5H7a2 2 0 0 0-2 2V17a2 2 0 0 0 2 2h9.4a2 2 0 0 0 2-2v-3.6"/><path d="M14.6 4.6h4.9v4.9"/><path d="m19.5 4.6-7 7"/></svg>',
@@ -2048,7 +2055,7 @@
     const SEC2 = { b64: '互转', mdCopy: '用法', linkUnlock: '说明', autoReact: '状态', readBoost: '进度', cfShield: '状态', onlyUser: '状态' };
 
     const flagsBox = root.querySelector('#kit-flags');      // 主看板：七行清单
-    const subsBox = root.querySelector('#kit-subs');        // 子看板：七个功能各自的内容
+    const subsBox = root.querySelector('#kit-subs');        // 子看板：八个功能各自的内容
     const dots = {};                      // 功能 id → 它那一枚指示灯
     const rows = {};                      // 功能 id → 它的行（把状态色写到 --accent）
     const switches = {};                  // 功能 id → 它那枚开关（进子看板时搬到标题条右端）
@@ -2058,6 +2065,7 @@
       (dots[id] || []).forEach(function (el) { el.className = k; });
       const r = rows[id];
       if (r) r.style.setProperty('--accent', DOT_COLOR[cls] || DOT_COLOR.on);
+      if (id === 'contentFilter') { const cb = root.querySelector('[data-flag="contentFilter"]'); if (cb) cb.checked = isOn(id); }
     }
     KitUI.onDot = paintDot;
 
@@ -2199,6 +2207,7 @@
         subsBox.appendChild(box);                         // 子看板：这个功能自己的全部内容
 
         cb.addEventListener('change', function () {
+          if (def.id === 'contentFilter') { ContentFilter.setEnabled(cb.checked); return; }
           setFlag(def.id, cb.checked);
           KitUI.setStatus((cb.checked ? '已开启 ' : '已关闭 ') + def.label + '\n正在刷新页面…', 3000);
           setTimeout(function () { location.reload(); }, 480);
@@ -2288,6 +2297,7 @@
     KitUI.activeTab = function () { return activeTab; };
 
     // 视图建好后，再抓「密文自解」页里的手动解码元件
+    ContentFilter.mount(root);
     ta = root.querySelector('.ta');
     out = root.querySelector('.out');
     if (ta) ta.addEventListener('input', scheduleDecode);
@@ -3165,6 +3175,7 @@
       var arts = document.querySelectorAll('article[id^="post_"]');
       for (var i = 0; i < arts.length; i++) {
         var a = arts[i];
+        if (a.closest('.ldkit-filter-folded, [data-ldkit-filter-folded="1"]') || !a.getClientRects().length) continue;
         var r = a.getBoundingClientRect();
         if (r.bottom < 90 || r.top > vh - 90) continue;
         var btn = findReactionBtn(a);
@@ -4463,11 +4474,444 @@
       return true;
     };
   }
+  // BEGIN GENERATED CONTENT FILTER
+  // Content filtering is display-only. This source is embedded by build-content-filter.cjs.
+  const ContentFilter = (function () {
+    'use strict';
+    const KEY = 'ldkit.contentFilter.v1';
+    const FIELDS = {
+      topic: ['topicId', 'title', 'author', 'userId', 'tags', 'category', 'categoryId'],
+      post: ['postId', 'body', 'author', 'userId', 'topicId', 'title', 'topicAuthor', 'tags', 'category', 'categoryId'],
+      user: ['author', 'userId', 'topicId', 'title', 'tags', 'category', 'categoryId']
+    };
+    const LABELS = { topicId: '话题 ID', postId: '帖子 ID', title: '话题标题', body: '帖子正文', author: '作者用户名', userId: '作者 ID', topicAuthor: '话题发起者', tags: '标签', category: '类别名称', categoryId: '类别 ID' };
+    const defaults = () => ({ version: 1, spam: { enabled: true, maxChars: 30, rules: [
+      { id: 'spam-thanks', name: '纯感谢短语', enabled: true, op: 'regex', value: '^(谢谢|感谢分享|谢谢分享|感谢大佬|thanks|thx)[！!。.~～]*$', flags: 'i' },
+      { id: 'spam-mark', name: '占位短语', enabled: true, op: 'regex', value: '^(mark|插眼|前排|沙发|帮顶|签到|打卡|来了)[！!。.~～]*$', flags: 'i' },
+      { id: 'spam-laugh', name: '纯笑声或数字', enabled: true, op: 'regex', value: '^(哈{2,}|嘿{2,}|6{2,}|666)[！!。.~～]*$', flags: 'i' }
+    ] }, rules: [] });
+    let config = defaults(), epoch = 0, timer = null, busy = false, dirty = false, mounted = null;
+    let lastRoute = '', metadata = null, metadataRoute = '', fetchRoute = '', fetchController = null, notice = '';
+    let fetchAttempts = 0, retryAt = 0;
+    const states = new Map();
+    let cachedFingerprint = '', cachedMatches = null, cachedError = '';
+    const bounded = value => String(value == null ? '' : value).slice(0, 20001);
+    function validate(raw) {
+      try {
+        if (typeof raw === 'string') {
+          if (raw.length > 200000) throw Error('配置不得超过 200000 字符');
+          raw = JSON.parse(raw);
+        }
+        const c = JSON.parse(JSON.stringify(raw));
+        if (!c || c.version !== 1 || !c.spam || !Array.isArray(c.rules) || !Array.isArray(c.spam.rules)) throw Error('需要 version=1、spam 和 rules 数组');
+        if (typeof c.spam.enabled !== 'boolean' || !Number.isInteger(c.spam.maxChars) || c.spam.maxChars < 1 || c.spam.maxChars > 500) throw Error('水贴门槛必须是 1–500 的整数');
+        if (c.rules.length + c.spam.rules.length > 200) throw Error('最多 200 条规则（含水贴预设）');
+        const ids = new Set();
+        const checkPattern = (p, idField) => {
+          if (!p || !['exact', 'keyword', 'regex'].includes(p.op)) throw Error('匹配方式须为 exact / keyword / regex');
+          if (typeof p.value !== 'string' || !p.value.trim() || p.value.length > 1000) throw Error('匹配值必须为非空字符串（最多 1000 字符）');
+          if (idField && (p.op !== 'exact' || !/^\d+$/.test(p.value))) throw Error('ID 只允许数字字符串的精确匹配');
+          if (p.flags !== undefined && typeof p.flags !== 'string') throw Error('flags 必须是字符串');
+          if (p.op === 'regex') {
+            if (p.value.length > 256 || !/^[imsugy]*$/.test(p.flags || '') || new Set(p.flags || '').size !== (p.flags || '').length) throw Error('正则最多 256 字符；flags 仅允许 i m s u g y 且不重复');
+            new RegExp(p.value, p.flags || '');
+          } else if (p.flags) throw Error('非正则规则不可设置 flags');
+        };
+        const checkHeader = r => {
+          if (!r || typeof r.id !== 'string' || !r.id || r.id.length > 80 || ids.has(r.id)) throw Error('规则 ID 必须非空且唯一（最多 80 字符）');
+          ids.add(r.id);
+          if (typeof r.name !== 'string' || !r.name.trim() || r.name.length > 100 || typeof r.enabled !== 'boolean') throw Error('规则需要名称和 enabled 布尔值');
+        };
+        c.spam.rules.forEach(r => { checkHeader(r); checkPattern(r, false); });
+        c.rules.forEach(r => {
+          checkHeader(r);
+          if (!Object.prototype.hasOwnProperty.call(FIELDS, r.target)) throw Error('对象必须是 topic / post / user');
+          if (!Array.isArray(r.conditions) || r.conditions.length < 1 || r.conditions.length > 8) throw Error('每条规则须有 1–8 个 AND 条件');
+          if (r.target === 'user' && !r.conditions.some(p => p.field === 'author' || p.field === 'userId')) throw Error('用户规则须包含用户名或用户 ID 条件');
+          r.conditions.forEach(p => {
+            if (!p || !FIELDS[r.target].includes(p.field)) throw Error('字段不适用于所选对象：' + (p && p.field));
+            checkPattern(p, /Id$/.test(p.field));
+          });
+        });
+        if (JSON.stringify(c).length > 200000) throw Error('配置过大');
+        return { ok: true, config: c };
+      } catch (e) { return { ok: false, error: '未保存：' + e.message }; }
+    }
+    try {
+      const saved = localStorage.getItem(KEY);
+      if (saved) { const v = validate(saved); if (v.ok) config = v.config; else notice = v.error; }
+    } catch (e) { notice = '无法读取本地过滤配置'; }
+
+    // Runs only in a disposable Worker, never on the UI thread.
+    function workerMain() {
+      const test = (p, values) => {
+        if (values == null) return false;
+        const list = Array.isArray(values) ? values : [values];
+        return list.some(v => {
+          if (v == null || String(v).length > 20000) return false;
+          const s = String(v); if (!s.trim()) return false;
+          if (p.op === 'exact') return s.toLowerCase() === p.value.toLowerCase();
+          if (p.op === 'keyword') return s.toLowerCase().includes(p.value.toLowerCase());
+          const re = new RegExp(p.value, p.flags || '');
+          re.lastIndex = 0;
+          return re.test(s);
+        });
+      };
+      self.onmessage = e => {
+        try {
+          const { config: c, items } = e.data;
+          const results = items.map(item => {
+            for (const r of c.rules) {
+              if (!r.enabled || (r.target !== item.kind && r.target !== 'user')) continue;
+              if (r.conditions.every(p => test(p, item[p.field]))) return { id: r.id, reason: r.name };
+            }
+            if (item.kind === 'post' && c.spam.enabled && item.postNumber > 1 && !item.protected) {
+              const text = (item.body || '').replace(/\s+/g, '');
+              if (text && [...text].length <= c.spam.maxChars) {
+                const r = c.spam.rules.find(p => p.enabled && test(p, text));
+                if (r) return { id: r.id, reason: '水贴预设：' + r.name };
+              }
+            }
+            return null;
+          });
+          self.postMessage({ results });
+        } catch (err) { self.postMessage({ error: err.message }); }
+      };
+      self.postMessage({ ready: true });
+    }
+    function evaluate(items, c) {
+      return new Promise((resolve, reject) => {
+        if (!Array.isArray(items) || items.length > 30 || JSON.stringify(items).length > 700000) { reject(Error('匹配批次超过资源限额')); return; }
+        let worker, url, timeout, settled = false;
+        const finish = (error, value) => {
+          if (settled) return;
+          settled = true; clearTimeout(timeout);
+          if (worker) worker.terminate();
+          if (url) URL.revokeObjectURL(url);
+          if (error) reject(error); else resolve(value);
+        };
+        try {
+          url = URL.createObjectURL(new Blob(['(' + workerMain.toString() + ')()'], { type: 'text/javascript' }));
+          worker = new Worker(url);
+          timeout = setTimeout(() => finish(Error('正则 Worker 启动超时，内容保持可见')), 1800);
+          worker.onerror = () => finish(Error('正则 Worker 不可用（可能被 CSP 限制），内容保持可见'));
+          worker.onmessage = e => {
+            if (e.data.ready) {
+              clearTimeout(timeout);
+              timeout = setTimeout(() => finish(Error('正则匹配超时（250ms），内容保持可见')), 250);
+              worker.postMessage({ items, config: c || config });
+            } else if (e.data.error) finish(Error(e.data.error));
+            else finish(null, e.data.results);
+          };
+        } catch (e) { finish(Error('匹配 Worker 创建失败：' + e.message)); }
+      });
+    }
+    function save(raw) {
+      const v = validate(raw);
+      if (!v.ok) { status(v.error); return v; }
+      try { localStorage.setItem(KEY, JSON.stringify(v.config)); }
+      catch (e) { const error = '未保存：本地存储不可写'; status(error); return { ok: false, error }; }
+      config = v.config; epoch++; restoreAll(); renderRules(); schedule(); status('规则已保存');
+      return { ok: true };
+    }
+    function status(text) {
+      notice = text;
+      if (mounted) { const el = mounted.querySelector('.cf-message'); if (el && el.textContent !== text) el.textContent = text; }
+    }
+    function setEnabled(value) {
+      setFlag('contentFilter', value); epoch++;
+      if (!value) { if (fetchController) fetchController.abort(); fetchController = null; fetchRoute = ''; fetchAttempts = 0; retryAt = 0; restoreAll(); status('内容过滤已关闭'); }
+      else { status('内容过滤已开启'); schedule(); }
+      if (KitUI.onDot) KitUI.onDot('contentFilter', value ? 'on' : 'off');
+    }
+    function restore(el) {
+      const state = states.get(el);
+      if (!state) return;
+      el.classList.remove('ldkit-filter-folded'); el.removeAttribute('data-ldkit-filter-folded');
+      state.placeholder.remove(); states.delete(el);
+    }
+    function restoreAll() { Array.from(states.keys()).forEach(restore); }
+    function fold(el, match, signature) {
+      let state = states.get(el);
+      if (state && (state.signature !== signature || !state.placeholder.isConnected)) { restore(el); state = null; }
+      if (state) { if (!state.expanded) { el.setAttribute('data-ldkit-filter-folded', '1'); } return; }
+      const row = el.tagName === 'TR';
+      const placeholder = document.createElement(row ? 'tr' : 'div');
+      placeholder.className = 'ldkit-filter-placeholder';
+      const box = row ? placeholder.appendChild(document.createElement('td')) : placeholder;
+      if (row) box.colSpan = Math.max(1, el.children.length);
+      const reason = document.createElement('span'); reason.textContent = '已过滤 · ' + match.reason + ' ';
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = '临时展开';
+      box.append(reason, button);
+      state = { placeholder, signature, expanded: false };
+      button.addEventListener('click', () => {
+        state.expanded = !state.expanded;
+        el.classList.toggle('ldkit-filter-folded', !state.expanded);
+        if (state.expanded) el.removeAttribute('data-ldkit-filter-folded'); else el.setAttribute('data-ldkit-filter-folded', '1');
+        button.textContent = state.expanded ? '重新折叠' : '临时展开';
+      });
+      if (el.matches('.topic-post')) el.prepend(placeholder); else el.before(placeholder);
+      el.classList.add('ldkit-filter-folded'); el.setAttribute('data-ldkit-filter-folded', '1'); states.set(el, state);
+    }
+    function currentRoute() { return location.pathname + location.search; }
+    const currentTopicId = () => (location.pathname.match(/^\/t\/(?:[^/]+\/)?(\d+)/) || [])[1] || null;
+    function modelTopic() {
+      try {
+        const mod = window.require && window.require('discourse/lib/url');
+        const container = mod && (mod.default || mod).container;
+        const ctrl = container && container.lookup('controller:topic');
+        const m = ctrl && (ctrl.get ? ctrl.get('model') : ctrl.model);
+        if (m && String(m.id) === currentTopicId()) return m;
+      } catch (e) { /* DOM/JSON fallback */ }
+      return null;
+    }
+    function topicMeta() {
+      const id = currentTopicId();
+      const m = modelTopic();
+      const j = metadataRoute === currentRoute() ? metadata : null;
+      const data = m || (j && j.id && String(j.id) === id ? j : null);
+      const categoryId = data && (data.category_id || (data.category && data.category.id));
+      const tagNodes = document.querySelectorAll('#topic-title .discourse-tag');
+      const by = data && data.details && data.details.created_by;
+      return {
+        topicId: id,
+        title: bounded(data && data.title || document.querySelector('#topic-title h1')?.textContent || document.querySelector('h1 .fancy-title')?.textContent || ''),
+        topicAuthor: by && by.username || null,
+        categoryId: categoryId ? String(categoryId) : document.querySelector('#topic-title [data-category-id]')?.getAttribute('data-category-id') || null,
+        category: data && data.category && data.category.name || document.querySelector('#topic-title .category-name')?.textContent?.trim() || null,
+        tags: tagNodes.length ? Array.from(tagNodes, t => t.textContent.trim()) : (data && Array.isArray(data.tags) ? data.tags.map(t => typeof t === 'string' ? t : t.name) : null),
+        author: by && by.username || null, userId: by && by.id ? String(by.id) : null
+      };
+    }
+    function readPost(el, meta) {
+      const article = el.querySelector('article[data-post-id], article[id^="post_"]') || el;
+      const id = article.getAttribute('data-post-id') || el.getAttribute('data-post-id') || null;
+      const num = Number(el.getAttribute('data-post-number') || article.getAttribute('data-post-number')) || 0;
+      const cooked = el.querySelector('.cooked');
+      let body = null;
+      if (cooked) {
+        if (cooked.querySelector('.ld-b64')) {
+          const clone = cooked.cloneNode(true);
+          clone.querySelectorAll('.ld-b64').forEach(n => { n.textContent = n.dataset.raw || ''; });
+          body = bounded(clone.textContent.trim());
+        } else body = bounded(cooked.textContent.trim());
+      }
+      const authorNode = el.querySelector('.topic-meta-data .names [data-user-card], .topic-avatar [data-user-card]');
+      const name = authorNode?.getAttribute('data-user-card') || el.querySelector('.topic-meta-data .username')?.textContent?.trim() || null;
+      const j = metadataRoute === currentRoute() && metadata;
+      const post = j && j.post_stream && j.post_stream.posts && j.post_stream.posts.find(p => id ? String(p.id) === id : p.post_number === num);
+      return Object.assign({}, meta, { kind: 'post', postId: id || (post ? String(post.id) : null), postNumber: num,
+        author: name || post && post.username || null,
+        userId: article.getAttribute('data-user-id') || el.getAttribute('data-user-id') || (post && post.user_id ? String(post.user_id) : null),
+        body, protected: !num || !!cooked?.querySelector('pre, code, blockquote, aside.quote, a, img, video, audio, iframe, .attachment, .lightbox, .onebox') });
+    }
+    function collect(scope) {
+      const root = scope || document, records = [], meta = topicMeta();
+      const j = metadataRoute === currentRoute() && metadata;
+      root.querySelectorAll('.topic-list-item:not(.ldkit-filter-placeholder)').forEach(el => {
+        const link = el.querySelector('.raw-topic-link, a.title');
+        const id = el.getAttribute('data-topic-id') || (link?.getAttribute('href')?.match(/\/t\/(?:[^/]+\/)?(\d+)/) || [])[1] || null;
+        const topic = j && j.topic_list && j.topic_list.topics && j.topic_list.topics.find(t => String(t.id) === id);
+        const posterId = topic && topic.posters && topic.posters[0] && topic.posters[0].user_id;
+        const author = j && j.users && j.users.find(u => u.id === posterId);
+        // Only the first poster is the topic starter, never the latest responder.
+        const starter = el.querySelector('.posters > a:first-child[data-user-card]');
+        const tagNodes = el.querySelectorAll('.discourse-tags .discourse-tag, .discourse-tags a');
+        const item = { kind: 'topic', topicId: id, title: link ? bounded(link.textContent.trim()) : null,
+          author: author && author.username || starter?.getAttribute('data-user-card') || null,
+          userId: author ? String(author.id) : starter?.getAttribute('data-user-id') || null,
+          tags: tagNodes.length ? Array.from(tagNodes, t => t.textContent.trim()) : (topic && Array.isArray(topic.tags) ? topic.tags.map(t => typeof t === 'string' ? t : t.name) : null),
+          categoryId: topic && topic.category_id ? String(topic.category_id) : el.querySelector('[data-category-id]')?.getAttribute('data-category-id') || el.getAttribute('data-category-id') || null,
+          category: el.querySelector('.category-name')?.textContent?.trim() || null };
+        records.push({ el, item });
+      });
+      root.querySelectorAll('.topic-post').forEach(el => records.push({ el, item: readPost(el, meta) }));
+      const stream = root.querySelector('.post-stream');
+      if (stream && meta.topicId) records.unshift({ el: stream, item: Object.assign({ kind: 'topic' }, meta) });
+      return records;
+    }
+    function enrich() {
+      const route = currentRoute();
+      if (fetchRoute === route || !isOn('contentFilter') || fetchAttempts >= 2 || Date.now() < retryAt) return;
+      const topicId = currentTopicId();
+      const path = location.pathname.replace(/\/$/, '');
+      if (!topicId && !/^\/(latest|new|unread|top|hot|categories|c\/|tag\/|tags\/)/.test(path)) return;
+      fetchRoute = route; fetchAttempts++;
+      if (fetchController) fetchController.abort();
+      fetchController = new AbortController();
+      const controller = fetchController;
+      const stop = setTimeout(() => controller.abort(), 7000);
+      const url = topicId ? '/t/' + topicId + '.json' : path + '.json' + location.search;
+      fetch(url, { credentials: 'same-origin', signal: controller.signal }).then(r => {
+        if (!r.ok) throw Error('metadata unavailable'); return r.text();
+      }).then(text => {
+        if (text.length > 2000000) throw Error('metadata too large');
+        const j = JSON.parse(text);
+        if (route === currentRoute() && isOn('contentFilter')) { metadata = j; metadataRoute = route; schedule(); }
+      }).catch(() => {
+        if (fetchController === controller && route === currentRoute()) { fetchRoute = ''; retryAt = Date.now() + 3000; }
+      }).finally(() => { clearTimeout(stop); if (fetchController === controller) fetchController = null; });
+    }
+    async function scan(scope) {
+      if (!isOn('contentFilter')) { restoreAll(); return; }
+      if (busy) { dirty = true; return; }
+      busy = true;
+      const runEpoch = epoch, route = currentRoute();
+      try {
+        const records = collect(scope), alive = new Set(records.map(r => r.el));
+        if (!scope) states.forEach((s, el) => { if (!el.isConnected || !alive.has(el)) restore(el); });
+        const fingerprint = route + ':' + runEpoch + ':' + JSON.stringify(records.map(r => r.item));
+        let matches;
+        if (fingerprint === cachedFingerprint) {
+          if (cachedError) throw Error(cachedError);
+          matches = cachedMatches;
+        } else {
+          matches = [];
+          try {
+            for (let i = 0; i < records.length; i += 30) {
+              const batch = records.slice(i, i + 30);
+              matches.push(...await evaluate(batch.map(r => r.item)));
+              if (runEpoch !== epoch || route !== currentRoute() || !isOn('contentFilter')) return;
+            }
+            cachedFingerprint = fingerprint; cachedMatches = matches; cachedError = '';
+          } catch (e) { cachedFingerprint = fingerprint; cachedMatches = null; cachedError = e.message; throw e; }
+        }
+        records.forEach((r, i) => {
+          if (matches[i]) fold(r.el, matches[i], route + JSON.stringify(r.item) + matches[i].id + runEpoch);
+          else restore(r.el);
+        });
+        status('已过滤 ' + matches.filter(Boolean).length + ' 项（仅本地显示）');
+      } catch (e) { restoreAll(); status(e.message); }
+      finally { busy = false; if (dirty) { dirty = false; schedule(); } }
+    }
+    function schedule() {
+      if (!isOn('contentFilter')) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { timer = null; scan(); }, 120);
+    }
+    function init() {
+      if (document.getElementById('ldkit-filter-style')) return;
+      const style = document.createElement('style'); style.id = 'ldkit-filter-style';
+      style.textContent = '.ldkit-filter-folded:not(.topic-post),[data-ldkit-filter-folded="1"]:not(.topic-post){display:none!important}.topic-post[data-ldkit-filter-folded="1"]>:not(.ldkit-filter-placeholder){display:none!important}.ldkit-filter-placeholder{padding:8px;border:1px dashed var(--primary-low,#aaa);border-radius:6px;margin:5px 0;font-size:12px}.ldkit-filter-placeholder button{cursor:pointer;margin-left:8px}';
+      document.head.appendChild(style);
+      const observer = new MutationObserver(mutations => {
+        if (mutations.some(m => {
+          const el = m.target.nodeType === 1 ? m.target : m.target.parentElement;
+          if (!el || el.closest('.ldkit-filter-placeholder, #ldb64-manual-host')) return false;
+          if (m.type === 'childList' && [...m.addedNodes, ...m.removedNodes].every(n => n.nodeType === 1 && (n.classList.contains('ldkit-filter-placeholder') || n.id === 'ldb64-manual-host'))) return false;
+          return true;
+        })) schedule();
+      });
+      observer.observe(document.documentElement, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ['data-post-id', 'data-topic-id', 'data-post-number', 'data-user-card', 'data-user-id', 'data-category-id', 'href'] });
+      setInterval(() => {
+        const route = currentRoute();
+        if (route !== lastRoute) { lastRoute = route; epoch++; metadata = null; metadataRoute = ''; fetchRoute = ''; fetchAttempts = 0; retryAt = 0; restoreAll(); }
+        if (isOn('contentFilter')) { enrich(); schedule(); }
+      }, 1500);
+      window.addEventListener('storage', e => {
+        if (e.key === KEY) { const v = validate(e.newValue || defaults()); if (v.ok) { config = v.config; epoch++; restoreAll(); renderRules(); schedule(); } }
+        if (e.key === FLAGS_KEY) { try {
+          const f = JSON.parse(e.newValue); FLAGS.contentFilter = !!(f && f.contentFilter); epoch++; restoreAll();
+          if (!FLAGS.contentFilter) { if (fetchController) fetchController.abort(); fetchController = null; fetchRoute = ''; fetchAttempts = 0; retryAt = 0; }
+          if (KitUI.onDot) KitUI.onDot('contentFilter', FLAGS.contentFilter ? 'on' : 'off');
+          schedule();
+        } catch (err) { /* Invalid foreign storage ignored. */ } }
+      });
+      lastRoute = currentRoute(); enrich(); schedule();
+    }
+    function ruleExample(target) {
+      return { id: 'rule-' + Date.now().toString(36), name: '新规则', enabled: true, target: target || 'topic', conditions: [{ field: target === 'user' ? 'author' : target === 'post' ? 'body' : 'title', op: target === 'user' ? 'exact' : 'keyword', value: '示例词' }] };
+    }
+    function renderRules() {
+      if (!mounted) return;
+      const list = mounted.querySelector('.cf-rule-list'); if (!list) return;
+      list.textContent = '';
+      const draft = mounted.querySelector('.cf-json');
+      if (draft) draft.value = JSON.stringify(config, null, 2);
+      [['水贴预设', config.spam.rules, true], ['屏蔽规则', config.rules, false]].forEach(([label, rules, spam]) => {
+        const header = document.createElement('strong'); header.textContent = label; list.appendChild(header);
+        rules.forEach(r => {
+          const line = document.createElement('div');
+          const toggle = document.createElement('input'); toggle.type = 'checkbox'; toggle.checked = r.enabled;
+          toggle.setAttribute('aria-label', '启停 ' + r.name);
+          toggle.addEventListener('change', () => { const c = JSON.parse(JSON.stringify(config)); (spam ? c.spam.rules : c.rules).find(x => x.id === r.id).enabled = toggle.checked; save(c); });
+          const name = document.createElement('span'); name.textContent = r.name + (spam ? '' : ' · ' + r.target);
+          const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'mini'; edit.textContent = '编辑';
+          edit.addEventListener('click', () => openEditor(r, spam));
+          const del = document.createElement('button'); del.type = 'button'; del.className = 'mini'; del.textContent = '删除';
+          del.addEventListener('click', () => { const c = JSON.parse(JSON.stringify(config)); if (spam) c.spam.rules = c.spam.rules.filter(x => x.id !== r.id); else c.rules = c.rules.filter(x => x.id !== r.id); save(c); });
+          line.append(toggle, name, edit, del); list.appendChild(line);
+        });
+      });
+      mounted.querySelector('.cf-spam-on').checked = config.spam.enabled;
+      mounted.querySelector('.cf-max').value = String(config.spam.maxChars);
+    }
+    function openEditor(rule, spam) {
+      const form = mounted.querySelector('.cf-editor'); form.hidden = false; form.textContent = '';
+      const draft = JSON.parse(JSON.stringify(rule));
+      const name = document.createElement('input'); name.value = draft.name; name.setAttribute('aria-label', '规则名称');
+      form.appendChild(name);
+      const target = document.createElement('select'); target.setAttribute('aria-label', '规则对象');
+      ['topic', 'post', 'user'].forEach(t => { const o = new Option({topic:'话题',post:'帖子',user:'用户'}[t], t); target.appendChild(o); });
+      target.value = draft.target || 'post'; target.disabled = spam; form.appendChild(target);
+      const hint = document.createElement('p'); hint.className = 'hint'; hint.textContent = spam ? '预设需要短文本门槛且通过结构保护。' : '同条条件全部命中；用户名规则作用于作者。标签和类别属于话题。'; form.appendChild(hint);
+      const rows = document.createElement('div'); form.appendChild(rows);
+      function conditions() {
+        rows.textContent = '';
+        const parts = spam ? [draft] : draft.conditions;
+        parts.forEach((p, index) => {
+          const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:3px;flex-wrap:wrap;margin:5px 0';
+          if (!spam) {
+            const field = document.createElement('select'); field.setAttribute('aria-label', '匹配字段');
+            FIELDS[target.value].forEach(f => field.appendChild(new Option(LABELS[f], f))); field.value = p.field;
+            field.onchange = () => { p.field = field.value; if (['tags', 'category'].includes(p.field) || /Id$/.test(p.field)) { p.op = 'exact'; delete p.flags; } conditions(); }; row.appendChild(field);
+          }
+          const op = document.createElement('select'); op.setAttribute('aria-label', '匹配方式');
+          [['exact','精确'],['keyword','关键词'],['regex','正则']].forEach(([v,l]) => op.appendChild(new Option(l,v))); op.value = p.op;
+          op.onchange = () => { p.op = op.value; if (p.op !== 'regex') delete p.flags; conditions(); }; row.appendChild(op);
+          const value = document.createElement('input'); value.value = p.value; value.placeholder = '匹配值'; value.setAttribute('aria-label', '匹配值'); value.style.minWidth = '90px'; value.style.width = '120px'; value.oninput = () => { p.value = value.value; }; row.appendChild(value);
+          const flags = document.createElement('input'); flags.value = p.flags || ''; flags.disabled = p.op !== 'regex'; flags.placeholder = 'flags'; flags.setAttribute('aria-label', '正则 flags'); flags.style.width = '45px'; flags.oninput = () => { p.flags = flags.value; }; row.appendChild(flags);
+          if (!spam) { const del = document.createElement('button'); del.type = 'button'; del.textContent = '移除条件'; del.onclick = () => { draft.conditions.splice(index, 1); conditions(); }; row.appendChild(del); }
+          rows.appendChild(row);
+        });
+      }
+      target.onchange = () => { draft.target = target.value; draft.conditions = ruleExample(target.value).conditions; conditions(); };
+      conditions();
+      if (!spam) { const add = document.createElement('button'); add.type = 'button'; add.textContent = '增加 AND 条件'; add.onclick = () => { draft.conditions.push(ruleExample(target.value).conditions[0]); conditions(); }; form.appendChild(add); }
+      const submit = document.createElement('button'); submit.type = 'button'; submit.className = 'go'; submit.textContent = '保存这条规则';
+      submit.onclick = () => {
+        draft.name = name.value;
+        const c = JSON.parse(JSON.stringify(config)); const list = spam ? c.spam.rules : c.rules;
+        const index = list.findIndex(r => r.id === draft.id); if (index < 0) list.push(draft); else list[index] = draft;
+        if (save(c).ok) form.hidden = true;
+      };
+      const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = '取消编辑'; cancel.onclick = () => { form.hidden = true; };
+      form.append(submit, cancel);
+    }
+    function mount(root) {
+      mounted = root.querySelector('.cf-panel'); if (!mounted) return;
+      mounted.innerHTML = '<p class="hint">仅本地折叠；不改变站点忽略设置或已读提速任务。关键词忽略大小写；同条 AND、多条 OR。标签/类别为话题属性；ID 精确。JSON 区可导入完整配置，保存前校验。</p><label><input class="cf-spam-on" type="checkbox">启用水贴预设</label><label>短文本最多 <input class="cf-max" type="number" min="1" max="500" style="width:60px"> 字</label><button type="button" class="mini cf-spam-save">保存水贴设置</button><div class="cf-rule-list" style="display:flex;flex-direction:column;gap:5px"></div><div class="row-btns"><button type="button" class="mini cf-add">新增屏蔽规则</button><button type="button" class="mini cf-add-spam">新增水贴预设</button></div><div class="cf-editor" hidden></div><details><summary>配置 JSON / 导入导出 / 示例</summary><textarea class="cf-json" aria-label="过滤配置 JSON" rows="10" spellcheck="false" style="width:100%;font-size:11px"></textarea><button type="button" class="mini cf-import">校验并导入</button><button type="button" class="mini cf-export">复制导出</button><button type="button" class="mini cf-example">载入示例（不自动保存）</button></details><p class="cf-message" role="status"></p>';
+      mounted.querySelector('.cf-spam-save').onclick = () => { const c = JSON.parse(JSON.stringify(config)); c.spam.enabled = mounted.querySelector('.cf-spam-on').checked; c.spam.maxChars = Number(mounted.querySelector('.cf-max').value); save(c); };
+      mounted.querySelector('.cf-add').onclick = () => openEditor(ruleExample('topic'), false);
+      mounted.querySelector('.cf-add-spam').onclick = () => openEditor({id:'spam-'+Date.now().toString(36),name:'新水贴预设',enabled:true,op:'exact',value:'示例短语'}, true);
+      mounted.querySelector('.cf-import').onclick = () => save(mounted.querySelector('.cf-json').value);
+      mounted.querySelector('.cf-export').onclick = () => copyText(JSON.stringify(config, null, 2)).then(r => status(r.ok ? '已复制完整配置' : '复制失败，请手动复制 JSON'));
+      mounted.querySelector('.cf-example').onclick = () => {
+        const c = defaults(); c.rules = [ruleExample('topic'), Object.assign(ruleExample('user'), { id:'example-user', name:'用户精确屏蔽示例', conditions:[{field:'author',op:'exact',value:'example_user'}] })];
+        mounted.querySelector('.cf-json').value = JSON.stringify(c, null, 2); status('示例未保存；确认后点击校验并导入');
+      };
+      renderRules(); status(notice || (isOn('contentFilter') ? '内容过滤已开启' : '内容过滤默认关闭'));
+    }
+    return { KEY, defaults, validate, save, evaluate, collect, scan, init, mount, setEnabled, getConfig: () => JSON.parse(JSON.stringify(config)), getNotice: () => notice };
+  })();
+  // END GENERATED CONTENT FILTER
+
   // ---------- 测试/调试出口（无副作用） ----------
   try {
     window.__LDB64__ = {
-      version: '2.9.0',                        // 与脚本头 @version 保持同步（供调试与自检读取）
+      version: '2.10.0',                        // 与脚本头 @version 保持同步（供调试与自检读取）
       flags: FLAGS,
+      contentFilter: ContentFilter,
       CFG: CFG,
       MANUAL: MANUAL,
       WS_RE: WS_RE,
@@ -4559,6 +5003,7 @@
 
   function bootDom() {
     if (window.__ldkitBooted) return;           // 不重复挂保活定时器与各模块
+    try { ContentFilter.init(); } catch (e) { /* Display filtering must not stop other modules. */ }
     window.__ldkitBooted = true;
     try { mountPanel(); } catch (e) {
       // 面板失败不影响各模块，但别把错误闷掉：留一份可自检的出口

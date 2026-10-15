@@ -1,11 +1,11 @@
 # LINUX DO 工具箱
 
-一个给 [linux.do](https://linux.do/) / qingju.me / idcflare.com 的油猴脚本：**七个功能挤在右下角一枚悬浮球里，各自独立开关。**
+一个给 [linux.do](https://linux.do/) / qingju.me / idcflare.com 的油猴脚本：**八个功能挤在右下角一枚悬浮球里，各自独立开关。**
 功能名一律四个汉字，面板是两级导航（主看板一行一个功能 → 点进去是它自己的子看板）。
 
 > 装好就在右下角；鼠标悬停展开，按住可拖动位置，位置会记住。
 
-## 七个功能
+## 八个功能
 
 | # | 功能 | 干什么 |
 |---|------|--------|
@@ -16,6 +16,11 @@
 | ⑤ | **已读提速** | 向 `/topics/timings` 批量同步已读帖数与阅读时长，快速刷已读；带本地进度记忆、可清空重刷。 |
 | ⑥ | **过盾重试** | 识别 Cloudflare 挑战页（含 `/new`、`/latest`、`/t/...` 等原 URL 内嵌的 Turnstile interstitial）；挑战由页面正常完成后自动恢复并确认完整同源原地址。带 5 秒冷却、最多 2 次自动重试；不操作验证控件。 |
 | ⑦ | **只看此人** | 每层楼用户名右侧长出一个按钮，**一点即只列该用户的帖子**，跳过官方那两步（点头像 → 点「话题中的 N 个帖子」）。 |
+| ⑧ | **内容过滤** | 默认关闭；水贴短文本+预设与话题／帖子／用户屏蔽统一管理，仅本地可恢复折叠，支持精确／关键词／带超时的正则、AND 条件与 JSON 导入导出。 |
+
+### 关于 ⑧「内容过滤」
+
+规则编辑、对象字段、完整 JSON 示例、参考源码和资源限额见 [内容过滤说明](docs/content-filter.md)。首帖和带代码／引用／链接／图片／附件的回复受水贴保护；人工显式规则不受该保护限制。关闭、停用或删除规则即恢复原节点。显示过滤不会自动改变已读提速任务；折叠隐藏项不触发随读回应。
 
 
 ### 关于 ①「密文自解」的 Base 编码
@@ -66,7 +71,7 @@ Base 是可逆表示，不提供加密或保密性。首版不支持 Base58Check
 
 ## 使用与更新
 
-- 面板底部有「一键全默认」，一次把七个功能的参数恢复出厂值。
+- 面板底部有「一键全默认」，恢复原七项参数；私人内容过滤规则保持不变。
 - 更新走脚本头里的 `@updateURL`（Greasyfork 自动同步）；本仓库同步留档一份 **逐字节相同** 的源码。
 - 反馈 / 提问：来 **青橘 [qingju.me](https://qingju.me/)** 的同好圈，或在本仓库 [Issues](https://github.com/hawchou1995/linuxdo-toolbox/issues) 里提。
 
@@ -76,24 +81,26 @@ Base 是可逆表示，不提供加密或保密性。首版不支持 Base58Check
 linuxdo-toolbox.user.js      # 单文件用户脚本（就是它本体，直接可装）
 scripts/selfcheck.html       # 离线自检页：mock 话题 DOM、Discourse 容器、面板 shadow DOM、独立盾页与 /new、/latest、/t/... 原 URL 内嵌挑战
 scripts/run-selfcheck.cjs    # 自检执行器：起本地静态服务 + 真实 Chromium 跑原功能与过盾场景
+scripts/content-filter.js    # 内容过滤源模块，构建后内嵌发布单文件
+scripts/build-content-filter.cjs # 构建；--check 核对内嵌一致
+scripts/content-filter-selfcheck.html # 过滤专项与刷新持久化
 ```
 
 跑一遍自检（需要本机有 Playwright 的 Chromium；`PLAYWRIGHT_CORE` / `CHROME_PATH` 可指定路径）：
 
 ```bash
 node scripts/run-selfcheck.cjs
-# → 合计：103 / 103 项通过；RESULT: PASS
+# → 原 103 项回归 + 内容过滤专项；RESULT: PASS
 ```
-v2.9.0 扩展五种 Base codec、帖子唯一候选扫描、歧义保护、手动格式选择与旧参数迁移；Cloudflare 逻辑未变。
+v2.10.0 新增统一内容过滤，保留 v2.9.0 五种 Base codec 与 Cloudflare 行为。review、测试及真实页面验收见 [验收记录](docs/content-filter-verification.md)。
 
-自检覆盖三块。**⑦「只看此人」**：按钮位置、**点击调官方 `postStream.filterParticipant`（不整页跳）**、
-拿不到容器时退化为 `?username_filters=` 整页跳、**单帖用户也有按钮**、重复扫描去重、已筛选态变
-「显示全部」并调官方 `cancelFilter`、面板「显示全部」出口、离开话题页清除、三个参数生效、开关关闭时不插。
+自检覆盖原功能与新增过滤；原 103 项断言保持不变。
 **①「密文自解」**：Base16/Base32/Base58/Base64/Base64URL 字节向量、前导零、非法载荷、同结果合并与不同结果歧义；
 帖子唯一 Base58 解码和碰撞原文保留、混合格式多层解码、手动 Auto 候选、五种格式的中文 / emoji / 换行往返、格式标签与旧 Base64URL 参数迁移。
 **⑦「只看此人」**：按钮位置、**点击调官方 `postStream.filterParticipant`（不整页跳）**、拿不到容器时退化为 `?username_filters=` 整页跳、
 **单帖用户也有按钮**、重复扫描去重、已筛选态变「显示全部」并调官方 `cancelFilter`、面板出口、离开话题页清除、三个参数生效、开关关闭时不插。
 **⑥「过盾重试」**：独立挑战页与 `/new`、`/latest`、`/t/...` 原 URL 内嵌 Cloudflare challenge 识别、等待提示、完整同源地址自动恢复确认、冷却、redirect 校验与重试上限；断言验证控件零交互。
+**⑧「内容过滤」**：水贴正反例与结构保护、对象字段、关键词／正则／标签／类别、AND/OR、缺失与空字段、非法配置、Worker 超时／创建失败、动态内容与路由、持久化、可视编辑与折叠恢复。
 
 ## 开源与社区
 
