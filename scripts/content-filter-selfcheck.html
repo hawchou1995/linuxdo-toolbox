@@ -23,6 +23,28 @@
     }
     ok('FILTER01 默认关闭且原七项开关保留', LD.flags.contentFilter === false && Object.keys(flags).every(k => LD.flags[k] === flags[k]));
     ok('FILTER02 面板仅一个统一入口且有规则面板', sh.querySelectorAll('[data-tab="contentFilter"]').length === 1 && !!sh.querySelector('.cf-panel'));
+    sh.querySelector('.fab').dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+    sh.querySelector('.panel').dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+    await sleep(460);
+    const cfSw = sh.querySelector('[data-flag="contentFilter"]').closest('.sw');
+    const swRect = cfSw.getBoundingClientRect();
+    const swCx = swRect.left + swRect.width / 2, swCy = swRect.top + swRect.height / 2;
+    const swHit = swRect.width ? sh.elementFromPoint(swCx, swCy) : null;
+    ok('SWITCH 开关轨道位置命中透明 checkbox 本身', !!swHit && swHit.tagName === 'INPUT' && swHit.type === 'checkbox', swHit ? swHit.tagName + '.' + swHit.className : 'null');
+    ok('SWITCH 开关轨道不再吞掉点击', getComputedStyle(cfSw.querySelector('i')).pointerEvents === 'none');
+    const swBefore = LD.flags.contentFilter;
+    swHit.click();await sleep(280);
+    ok('SWITCH 一次点击即切换并写回存储', LD.flags.contentFilter !== swBefore && JSON.parse(localStorage.getItem('ldkit.flags.v1')).contentFilter === LD.flags.contentFilter);
+    swHit.click();await sleep(280);
+    ok('SWITCH 再点一次即还原', LD.flags.contentFilter === swBefore);
+    const cfPanel = sh.querySelector('.cf-panel');
+    ok('CF03 复用面板既有设计语言', !!sh.querySelector('#ldkit-cf-style') && !!cfPanel.querySelector('.svc-sec') && !!cfPanel.querySelector('.cf-card') && !!cfPanel.querySelector('.cf-json-box'));
+    cfPanel.querySelector('.cf-add').click();
+    const cfConds = Array.from(cfPanel.querySelectorAll('.cf-cond'));
+    ok('CF04 条件行无内联样式且为卡片式', cfConds.length > 0 && cfConds.every(el => !el.hasAttribute('style')) && cfConds.every(el => getComputedStyle(el).borderStyle === 'dashed'));
+    cfPanel.querySelector('.cf-editor [aria-label="规则名称"]').value = '';
+    cfPanel.querySelector('.cf-editor .cf-cancel').click();
+    ok('CF05 取消编辑收起编辑器', cfPanel.querySelector('.cf-editor').hidden === true);
     const config = (...rules) => ({version:1,spam:{enabled:false,maxChars:30,rules:[]},rules});
     const rule = (target, field, op, value, flags) => ({id:'test',name:'合成测试',enabled:true,target,conditions:[{field,op,value,...(flags ? {flags} : {})}]});
     const item = {kind:'topic',topicId:'100',title:'Alpha discussion',author:'starter',userId:'8',tags:['tech','news'],category:'技术',categoryId:'4'};

@@ -1,6 +1,20 @@
-# v2.10.0 内容过滤候选版验收记录
+# LINUX DO 工具箱：内容过滤与面板修复验收记录（v2.10.0 → v2.10.1）
 
-日期：2026-10-15。基线：`a1d57732a57926fec9a844fb914f4530871e6d91`（v2.9.0）。
+日期：2026-10-15。基线：`a1d57732a57926fec9a844fb914f4530871e6d91`（v2.9.0）；v2.10.1 起点 `5c226c24db8237bd65e2d1b3a5c1168d22543d80`。
+
+## v2.10.1：开关点击 + 看板重做
+
+用户报告两件事：面板里各项功能的开关点不动；「内容过滤」子看板像老式论坛表单。
+
+**根因（开关）**：`.sw input` 与 `.sw i` 都是 `position:absolute; inset:0`，两者都没有 `z-index`，而 `<i>` 在 DOM 里靠后、按绘制顺序压在透明 checkbox 之上——点击全被那枚可见轨道吃掉，事件永远到不了 checkbox。这是面板既有缺陷，不是 v2.10.0 引入的。
+
+**修法**：`.sw i` 加 `pointer-events:none` 把命中权让回 checkbox，整枚开关从 `<span>` 换成 `<label>` 兜底，`.sw` 补 `display:block`。
+
+**根因（看板）**：`ContentFilter.mount()` 的 `innerHTML` 全是裸 `label` / `details` / `textarea` 与无样式按钮，没复用面板既有的 `.svc-sec` / `.pad` / `.mini` / `.go` / `.ta` / `.sw` 与设计变量。
+
+**修法**：规则行改成卡片（启停开关 + 名称 + 对象胶囊 + 编辑 / 删除）；条件编辑器改成卡片式字段行并去掉内联 `style.cssText`；JSON 区改成带 `<summary>` 的可折叠卡片；状态行区分正常 / 错误两色。`CF_CSS` 由模块自己在挂载时注入 shadow root，模块仍然自包含。
+
+**新增离线断言（7 条）**：开关轨道位置 `elementFromPoint` 命中的是 checkbox 本身；轨道 `pointer-events:none`；一次点击即切换并写回 `ldkit.flags.v1`；再点一次还原；面板复用既有设计语言；条件行无内联样式且为卡片式；取消编辑收起编辑器。
 
 ## 状态
 
@@ -48,7 +62,7 @@
 
 ## 可复验的离线检查
 
-- `node scripts/run-selfcheck.cjs`：**193/193 PASS**（原 103 项 + 新增 90 项）。
+- `node scripts/run-selfcheck.cjs`：**200/200 PASS**（原 103 项 + 内容过滤专项；v2.10.0 时为 193 项）。
 - `git diff a1d5773 -- scripts/selfcheck.html`：空，原 103 项测试文件未修改。
 - `node scripts/build-content-filter.cjs --check`：独立模块与嵌入发布稿 exact match。
 - `node --check linuxdo-toolbox.user.js`、`scripts/content-filter.js`、`scripts/build-content-filter.cjs`、`scripts/run-selfcheck.cjs`：通过。
@@ -79,6 +93,6 @@
 | 5 | met | 规则校验、AND/OR、缺失／空白不匹配、lastIndex、资源限额与超时测试。 |
 | 6 | met | 可视规则操作、导入失败保持配置、刷新持久化、占位与关闭恢复测试及真机证据。 |
 | 7 | met | 动态／SPA／节点复用专项，三站实际可取得字段；保留帖子壳兼容虚拟滚动；隐藏项扫描显式跳过；原 103 项回归保留。 |
-| 8 | met | 一次指定模型 review、主代理修复与 193 项复测、语法／构建一致性检查、真实登录态交互；暂存差异检查结果见最终交付。 |
+| 8 | met | 一次指定模型 review、主代理修复与 193 项复测、语法／构建一致性检查、真实登录态交互；暂存差异检查结果见最终交付。v2.10.1 复测扩到 200 项，本表未变。 |
 | 9 | met | commit `00dca03a3de6c2cdfb7cf4ab1bbd2068b6d041c7` 已推送 GitHub main；GreasyFork 596713 版本历史出现 v2.10.0；本地 / GitHub raw / GF CDN 三方同为 265802 bytes / `1E0DE9AE…`。 |
 | 10 | met | 汇总见本文；会话归还、进程 0、临时任务删除、临时规则清除。配置还原的披露见「配置还原」一节：Linux.do 精确恢复原值，另两站为脚本默认值（原值不可考，如实标注）。 |

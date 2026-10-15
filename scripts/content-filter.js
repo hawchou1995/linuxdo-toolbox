@@ -139,7 +139,12 @@
     }
     function status(text) {
       notice = text;
-      if (mounted) { const el = mounted.querySelector('.cf-message'); if (el && el.textContent !== text) el.textContent = text; }
+      if (!mounted) return;
+      const el = mounted.querySelector('.cf-message');
+      if (!el) return;
+      if (el.textContent !== text) el.textContent = text;
+      el.classList.toggle('cf-bad', /^(未保存|匹配批次|正则)/.test(text));
+      el.classList.toggle('cf-good', /^(规则已保存|已复制|内容过滤已开启|示例)/.test(text));
     }
     function setEnabled(value) {
       setFlag('contentFilter', value); epoch++;
@@ -345,25 +350,77 @@
     function ruleExample(target) {
       return { id: 'rule-' + Date.now().toString(36), name: '新规则', enabled: true, target: target || 'topic', conditions: [{ field: target === 'user' ? 'author' : target === 'post' ? 'body' : 'title', op: target === 'user' ? 'exact' : 'keyword', value: '示例词' }] };
     }
+    const CF_CSS = [
+      '.cf-panel{display:flex;flex-direction:column;gap:7px}',
+      '.cf-note{margin:0;font-size:11px;line-height:1.6;color:var(--fg-3)}',
+      '.cf-card{border:1px solid var(--line);border-radius:11px;background:var(--field);padding:9px 10px;display:flex;flex-direction:column;gap:7px}',
+      '.cf-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.cf-lbl{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--fg-2)}',
+      '.cf-num{width:64px;border-radius:7px;border:1px solid var(--field-line);background:var(--bg);color:var(--fg);padding:4px 7px;font:inherit;font-size:11px}',
+      '.cf-num:focus,.cf-in:focus{border-color:var(--fg-2);outline:none}',
+      '.cf-list{display:flex;flex-direction:column;gap:6px}',
+      '.cf-group{display:flex;align-items:center;gap:7px;margin:1px 0 0;font-size:10.5px;font-weight:600;letter-spacing:.06em;color:var(--fg-3)}',
+      '.cf-group::after{content:"";flex:1;height:1px;background:var(--line)}',
+      '.cf-rule{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--line);border-radius:10px;background:var(--field)}',
+      '.cf-rule:hover{border-color:var(--field-line)}',
+      '.cf-rule[data-off="1"]{opacity:.55}',
+      '.cf-rule-name{flex:1;min-width:0;font-size:12px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.cf-chip{flex:none;font-size:10px;line-height:1.7;padding:0 7px;border-radius:999px;border:1px solid var(--btn-2-line);background:var(--btn-2);color:var(--fg-3)}',
+      '.cf-ops{flex:none;display:flex;gap:4px}',
+      '.cf-editor{border:1px solid var(--accent,#3B82F6);border-radius:11px;background:var(--field);padding:10px;display:flex;flex-direction:column;gap:8px}',
+      '.cf-editor[hidden]{display:none}',
+      '.cf-field{display:flex;align-items:center;gap:8px}',
+      '.cf-field>span{flex:none;min-width:34px;font-size:11px;color:var(--fg-2)}',
+      '.cf-in{flex:1;min-width:0;border-radius:7px;border:1px solid var(--field-line);background:var(--bg);color:var(--fg);padding:4px 7px;font:inherit;font-size:11px}',
+      '.cf-conds{display:flex;flex-direction:column;gap:6px}',
+      '.cf-cond{display:flex;flex-wrap:wrap;gap:5px;align-items:center;padding:6px;border:1px dashed var(--field-line);border-radius:9px}',
+      '.cf-cond select,.cf-cond input{border-radius:7px;border:1px solid var(--field-line);background:var(--bg);color:var(--fg);padding:4px 6px;font:inherit;font-size:11px;min-width:0}',
+      '.cf-cond [aria-label="匹配值"]{flex:1 1 110px;min-width:96px}',
+      '.cf-cond [aria-label="正则 flags"]{flex:0 0 50px;width:50px}',
+      '.cf-json-box{border:1px solid var(--line);border-radius:11px;background:var(--field);padding:0 10px 10px}',
+      '.cf-json-box>summary{padding:9px 0;cursor:pointer;font-size:11px;color:var(--fg-2);list-style:none}',
+      '.cf-json-box>summary::-webkit-details-marker{display:none}',
+      '.cf-json-box>summary::before{content:"▸";display:inline-block;width:13px;color:var(--fg-3)}',
+      '.cf-json-box[open]>summary::before{content:"▾"}',
+      '.cf-json-box textarea.cf-json{width:100%;min-height:118px;max-height:220px;resize:vertical;box-sizing:border-box;border-radius:9px;border:1px solid var(--field-line);background:var(--bg);color:var(--fg);font-family:ui-monospace,"Cascadia Code","JetBrains Mono",Consolas,monospace;font-size:11px;line-height:1.5;padding:8px;outline:none}',
+      '.cf-json-box textarea.cf-json:focus{border-color:var(--fg-2)}',
+      '.cf-message{margin:0;min-height:16px;font-size:11px;line-height:1.5;color:var(--fg-2)}',
+      '.cf-message.cf-bad{color:var(--err)}',
+      '.cf-message.cf-good{color:var(--ok)}'
+    ].join('');
+    const targetName = t => ({ topic: '话题', post: '帖子', user: '用户' }[t] || t);
     function renderRules() {
       if (!mounted) return;
       const list = mounted.querySelector('.cf-rule-list'); if (!list) return;
       list.textContent = '';
       const draft = mounted.querySelector('.cf-json');
       if (draft) draft.value = JSON.stringify(config, null, 2);
+      if (!config.spam.rules.length && !config.rules.length) {
+        const empty = document.createElement('p'); empty.className = 'hint';
+        empty.textContent = '还没有规则。用下面的按钮新增；内容过滤默认关闭，配置只存在本机。';
+        list.appendChild(empty);
+      }
       [['水贴预设', config.spam.rules, true], ['屏蔽规则', config.rules, false]].forEach(([label, rules, spam]) => {
-        const header = document.createElement('strong'); header.textContent = label; list.appendChild(header);
+        if (!rules.length) return;
+        const group = document.createElement('div'); group.className = 'cf-group'; group.textContent = label; list.appendChild(group);
         rules.forEach(r => {
-          const line = document.createElement('div');
+          const row = document.createElement('div'); row.className = 'cf-rule';
+          if (!r.enabled) row.setAttribute('data-off', '1');
+          const sw = document.createElement('label'); sw.className = 'sw';
           const toggle = document.createElement('input'); toggle.type = 'checkbox'; toggle.checked = r.enabled;
           toggle.setAttribute('aria-label', '启停 ' + r.name);
           toggle.addEventListener('change', () => { const c = JSON.parse(JSON.stringify(config)); (spam ? c.spam.rules : c.rules).find(x => x.id === r.id).enabled = toggle.checked; save(c); });
-          const name = document.createElement('span'); name.textContent = r.name + (spam ? '' : ' · ' + r.target);
+          const track = document.createElement('i'); sw.append(toggle, track);
+          const name = document.createElement('span'); name.className = 'cf-rule-name'; name.textContent = r.name;
+          row.append(sw, name);
+          if (!spam) { const chip = document.createElement('span'); chip.className = 'cf-chip'; chip.textContent = targetName(r.target); row.appendChild(chip); }
+          const ops = document.createElement('span'); ops.className = 'cf-ops';
           const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'mini'; edit.textContent = '编辑';
           edit.addEventListener('click', () => openEditor(r, spam));
           const del = document.createElement('button'); del.type = 'button'; del.className = 'mini'; del.textContent = '删除';
           del.addEventListener('click', () => { const c = JSON.parse(JSON.stringify(config)); if (spam) c.spam.rules = c.spam.rules.filter(x => x.id !== r.id); else c.rules = c.rules.filter(x => x.id !== r.id); save(c); });
-          line.append(toggle, name, edit, del); list.appendChild(line);
+          ops.append(edit, del); row.appendChild(ops);
+          list.appendChild(row);
         });
       });
       mounted.querySelector('.cf-spam-on').checked = config.spam.enabled;
@@ -372,35 +429,51 @@
     function openEditor(rule, spam) {
       const form = mounted.querySelector('.cf-editor'); form.hidden = false; form.textContent = '';
       const draft = JSON.parse(JSON.stringify(rule));
-      const name = document.createElement('input'); name.value = draft.name; name.setAttribute('aria-label', '规则名称');
-      form.appendChild(name);
-      const target = document.createElement('select'); target.setAttribute('aria-label', '规则对象');
-      ['topic', 'post', 'user'].forEach(t => { const o = new Option({topic:'话题',post:'帖子',user:'用户'}[t], t); target.appendChild(o); });
-      target.value = draft.target || 'post'; target.disabled = spam; form.appendChild(target);
-      const hint = document.createElement('p'); hint.className = 'hint'; hint.textContent = spam ? '预设需要短文本门槛且通过结构保护。' : '同条条件全部命中；用户名规则作用于作者。标签和类别属于话题。'; form.appendChild(hint);
-      const rows = document.createElement('div'); form.appendChild(rows);
+      const head = document.createElement('div'); head.className = 'cf-field';
+      const nameLabel = document.createElement('span'); nameLabel.textContent = '名称';
+      const name = document.createElement('input'); name.className = 'cf-in'; name.value = draft.name; name.setAttribute('aria-label', '规则名称');
+      head.append(nameLabel, name); form.appendChild(head);
+      const targetRow = document.createElement('div'); targetRow.className = 'cf-field';
+      const targetLabel = document.createElement('span'); targetLabel.textContent = '对象';
+      const target = document.createElement('select'); target.className = 'cf-in'; target.setAttribute('aria-label', '规则对象');
+      ['topic', 'post', 'user'].forEach(t => target.appendChild(new Option(targetName(t), t)));
+      target.value = draft.target || 'post'; target.disabled = spam;
+      if (spam) targetRow.hidden = true;
+      targetRow.append(targetLabel, target); form.appendChild(targetRow);
+      const hint = document.createElement('p'); hint.className = 'hint';
+      hint.textContent = spam ? '预设需同时满足短文本门槛并通过结构保护。' : '同条条件全部命中才折叠；用户名规则只作用于作者，标签与类别属于话题。';
+      form.appendChild(hint);
+      const condTitle = document.createElement('div'); condTitle.className = 'cf-group';
+      condTitle.textContent = spam ? '匹配' : '条件（全部满足）';
+      form.appendChild(condTitle);
+      const rows = document.createElement('div'); rows.className = 'cf-conds'; form.appendChild(rows);
       function conditions() {
         rows.textContent = '';
         const parts = spam ? [draft] : draft.conditions;
         parts.forEach((p, index) => {
-          const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:3px;flex-wrap:wrap;margin:5px 0';
+          const row = document.createElement('div'); row.className = 'cf-cond';
           if (!spam) {
             const field = document.createElement('select'); field.setAttribute('aria-label', '匹配字段');
             FIELDS[target.value].forEach(f => field.appendChild(new Option(LABELS[f], f))); field.value = p.field;
-            field.onchange = () => { p.field = field.value; if (['tags', 'category'].includes(p.field) || /Id$/.test(p.field)) { p.op = 'exact'; delete p.flags; } conditions(); }; row.appendChild(field);
+            field.onchange = () => { p.field = field.value; if (['tags', 'category'].includes(p.field) || /Id$/.test(p.field)) { p.op = 'exact'; delete p.flags; } conditions(); };
+            row.appendChild(field);
           }
           const op = document.createElement('select'); op.setAttribute('aria-label', '匹配方式');
           [['exact','精确'],['keyword','关键词'],['regex','正则']].forEach(([v,l]) => op.appendChild(new Option(l,v))); op.value = p.op;
-          op.onchange = () => { p.op = op.value; if (p.op !== 'regex') delete p.flags; conditions(); }; row.appendChild(op);
-          const value = document.createElement('input'); value.value = p.value; value.placeholder = '匹配值'; value.setAttribute('aria-label', '匹配值'); value.style.minWidth = '90px'; value.style.width = '120px'; value.oninput = () => { p.value = value.value; }; row.appendChild(value);
-          const flags = document.createElement('input'); flags.value = p.flags || ''; flags.disabled = p.op !== 'regex'; flags.placeholder = 'flags'; flags.setAttribute('aria-label', '正则 flags'); flags.style.width = '45px'; flags.oninput = () => { p.flags = flags.value; }; row.appendChild(flags);
-          if (!spam) { const del = document.createElement('button'); del.type = 'button'; del.textContent = '移除条件'; del.onclick = () => { draft.conditions.splice(index, 1); conditions(); }; row.appendChild(del); }
+          op.onchange = () => { p.op = op.value; if (p.op !== 'regex') delete p.flags; conditions(); };
+          row.appendChild(op);
+          const value = document.createElement('input'); value.value = p.value; value.placeholder = '匹配值'; value.setAttribute('aria-label', '匹配值'); value.oninput = () => { p.value = value.value; };
+          row.appendChild(value);
+          const flags = document.createElement('input'); flags.value = p.flags || ''; flags.disabled = p.op !== 'regex'; flags.placeholder = 'flags'; flags.setAttribute('aria-label', '正则 flags'); flags.oninput = () => { p.flags = flags.value; };
+          row.appendChild(flags);
+          if (!spam) { const del = document.createElement('button'); del.type = 'button'; del.className = 'mini'; del.textContent = '移除'; del.onclick = () => { draft.conditions.splice(index, 1); conditions(); }; row.appendChild(del); }
           rows.appendChild(row);
         });
       }
       target.onchange = () => { draft.target = target.value; draft.conditions = ruleExample(target.value).conditions; conditions(); };
       conditions();
-      if (!spam) { const add = document.createElement('button'); add.type = 'button'; add.textContent = '增加 AND 条件'; add.onclick = () => { draft.conditions.push(ruleExample(target.value).conditions[0]); conditions(); }; form.appendChild(add); }
+      if (!spam) { const add = document.createElement('button'); add.type = 'button'; add.className = 'mini'; add.textContent = '增加 AND 条件'; add.onclick = () => { draft.conditions.push(ruleExample(target.value).conditions[0]); conditions(); }; form.appendChild(add); }
+      const btns = document.createElement('div'); btns.className = 'row-btns';
       const submit = document.createElement('button'); submit.type = 'button'; submit.className = 'go'; submit.textContent = '保存这条规则';
       submit.onclick = () => {
         draft.name = name.value;
@@ -408,12 +481,34 @@
         const index = list.findIndex(r => r.id === draft.id); if (index < 0) list.push(draft); else list[index] = draft;
         if (save(c).ok) form.hidden = true;
       };
-      const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = '取消编辑'; cancel.onclick = () => { form.hidden = true; };
-      form.append(submit, cancel);
+      const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'mini cf-cancel'; cancel.textContent = '取消';
+      cancel.onclick = () => { form.hidden = true; };
+      btns.append(submit, cancel); form.appendChild(btns);
     }
     function mount(root) {
       mounted = root.querySelector('.cf-panel'); if (!mounted) return;
-      mounted.innerHTML = '<p class="hint">仅本地折叠；不改变站点忽略设置或已读提速任务。关键词忽略大小写；同条 AND、多条 OR。标签/类别为话题属性；ID 精确。JSON 区可导入完整配置，保存前校验。</p><label><input class="cf-spam-on" type="checkbox">启用水贴预设</label><label>短文本最多 <input class="cf-max" type="number" min="1" max="500" style="width:60px"> 字</label><button type="button" class="mini cf-spam-save">保存水贴设置</button><div class="cf-rule-list" style="display:flex;flex-direction:column;gap:5px"></div><div class="row-btns"><button type="button" class="mini cf-add">新增屏蔽规则</button><button type="button" class="mini cf-add-spam">新增水贴预设</button></div><div class="cf-editor" hidden></div><details><summary>配置 JSON / 导入导出 / 示例</summary><textarea class="cf-json" aria-label="过滤配置 JSON" rows="10" spellcheck="false" style="width:100%;font-size:11px"></textarea><button type="button" class="mini cf-import">校验并导入</button><button type="button" class="mini cf-export">复制导出</button><button type="button" class="mini cf-example">载入示例（不自动保存）</button></details><p class="cf-message" role="status"></p>';
+      if (!root.querySelector('#ldkit-cf-style')) {
+        const style = document.createElement('style'); style.id = 'ldkit-cf-style'; style.textContent = CF_CSS;
+        root.appendChild(style);
+      }
+      mounted.innerHTML = [
+        '<p class="cf-note">仅本地折叠：不改站点忽略设置，也不改已读提速任务。关键词忽略大小写；同条 AND、多条 OR；标签与类别属于话题，ID 精确匹配。</p>',
+        '<div class="svc-sec">水贴过滤</div>',
+        '<div class="cf-card"><div class="cf-row">',
+        '<label class="cf-lbl"><span class="sw"><input class="cf-spam-on" type="checkbox"><i></i></span>启用水贴预设</label>',
+        '<label class="cf-lbl">短文本最多 <input class="cf-num cf-max" type="number" min="1" max="500"> 字</label>',
+        '</div><div class="row-btns"><button type="button" class="mini cf-add-spam">新增预设</button><button type="button" class="mini cf-spam-save">保存水贴设置</button></div></div>',
+        '<div class="svc-sec">规则</div>',
+        '<div class="cf-list cf-rule-list"></div>',
+        '<div class="row-btns"><button type="button" class="mini cf-add">新增屏蔽规则</button></div>',
+        '<div class="cf-editor" hidden></div>',
+        '<div class="svc-sec">配置</div>',
+        '<details class="cf-json-box"><summary>JSON 导入 / 导出 / 示例</summary>',
+        '<textarea class="cf-json" aria-label="过滤配置 JSON" rows="9" spellcheck="false"></textarea>',
+        '<div class="row-btns"><button type="button" class="mini cf-import">校验并导入</button><button type="button" class="mini cf-export">复制导出</button><button type="button" class="mini cf-example">载入示例（不自动保存）</button></div>',
+        '</details>',
+        '<p class="cf-message" role="status"></p>'
+      ].join('');
       mounted.querySelector('.cf-spam-save').onclick = () => { const c = JSON.parse(JSON.stringify(config)); c.spam.enabled = mounted.querySelector('.cf-spam-on').checked; c.spam.maxChars = Number(mounted.querySelector('.cf-max').value); save(c); };
       mounted.querySelector('.cf-add').onclick = () => openEditor(ruleExample('topic'), false);
       mounted.querySelector('.cf-add-spam').onclick = () => openEditor({id:'spam-'+Date.now().toString(36),name:'新水贴预设',enabled:true,op:'exact',value:'示例短语'}, true);

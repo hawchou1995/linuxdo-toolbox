@@ -90,9 +90,9 @@ scripts/content-filter-selfcheck.html # 过滤专项与刷新持久化
 
 ```bash
 node scripts/run-selfcheck.cjs
-# → 原 103 项回归 + 内容过滤专项；RESULT: PASS
+# → 合计 200 项通过（原 103 项回归 + 内容过滤专项）；RESULT: PASS
 ```
-v2.10.0 新增统一内容过滤，保留 v2.9.0 五种 Base codec 与 Cloudflare 行为。review、测试及真实页面验收见 [验收记录](docs/content-filter-verification.md)。
+v2.10.1 修「开关点了没反应」——开关那枚可见轨道不再吞掉点击（轨道让位给透明 checkbox，整枚开关变成可点 label）；并把「内容过滤」子看板改造成面板既有的卡片 / 分区 / 胶囊样式。v2.10.0 新增统一内容过滤，保留 v2.9.0 五种 Base codec 与 Cloudflare 行为。review、测试及真实页面验收见 [验收记录](docs/content-filter-verification.md)。
 
 自检覆盖原功能与新增过滤；原 103 项断言保持不变。
 **①「密文自解」**：Base16/Base32/Base58/Base64/Base64URL 字节向量、前导零、非法载荷、同结果合并与不同结果歧义；
