@@ -1,6 +1,18 @@
-# LINUX DO 工具箱：内容过滤与面板修复验收记录（v2.10.0 → v2.10.1）
+# LINUX DO 工具箱：内容过滤、面板开关与看板修复验收记录（v2.10.0 → v2.10.1）
 
 日期：2026-10-15。基线：`a1d57732a57926fec9a844fb914f4530871e6d91`（v2.9.0）；v2.10.1 起点 `5c226c24db8237bd65e2d1b3a5c1168d22543d80`。
+
+**发布（v2.10.1）**：commit `aa9e7485734d951677b2d2bfb7ce3bfdc56c5ede` 推送 GitHub main；GreasyFork 596713 版本历史含 v2.10.1；本地 / GitHub raw / GF CDN 三份源码同为 **272518 bytes**，SHA-256 `FE6682BFB0B0C547F9AB5B55D879DAEB000636F28446479710D2D343D449822D`。附加说明与更新日志均为 Markdown，页面内 SHA-256 与本地文件一致（10211 B / `3190DC49016E5AA04DFBF4F229A16A14FA53DC87CE49BB99D3D4BF09BB9DDB49`、690 B / `D87D25BE285DF3FAF727B77B96052EAB69215E66A4BD9EC0904831E68F11C558`）。
+
+**真机验证的工具侧限制（如实记录）**：bsk 在自己控制的标签页里注入全视口覆盖层 `BROWSER-SKILL-OVERLAY`（`pointer-events:auto`，用 `!important` 强制；页面侧 inline `!important` 与 `remove()` 都让不开），它同时挡住站点自己的按钮 —— 所以受控标签里页面内坐标命中测试恒为覆盖层，拿不到有效读数。改用 bsk 自己的真实鼠标点击：在开关**轨道**中心放一枚 `pointer-events:none` 的探针，让点击穿透到下面的 checkbox，再用 `Storage.prototype.setItem` 钩子捕获真实写回并立即还原原值（避免刷新后残留）。
+
+| 真实页面证据（linux.do 已登录，临时载入候选版） | 结果 |
+|---|---|
+| 8 枚开关全部非零尺寸、轨道 `pointer-events:none`、行壳为 `LABEL` | true |
+| bsk 真实鼠标点击 (961,179) —— 「内容过滤」开关**轨道**像素 | `ldkit.flags.v1` 被真实改写为 `contentFilter:true`（其余六个键不变），模块实际开启 |
+| bsk 真实鼠标点击 (961,508) —— 「只看此人」开关**轨道**像素 | 同样真实改写为 `onlyUser:true`，随后页面按既有逻辑刷新 |
+| 点击后的设置还原 | storage 与测试前逐字节相同（七项原值），临时配置键已清除 |
+| 新看板在真机 | 3 个分区 / 1 张卡片 / 可折叠 JSON / 模块自注入样式；编辑器字段齐、条件卡片无内联样式；面板保存规则 → 命中 1 项并显示原因、占位可见 → 展开 → 关闭恢复，全部 true |
 
 ## v2.10.1：开关点击 + 看板重做
 
