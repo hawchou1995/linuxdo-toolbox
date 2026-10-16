@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LINUX DO 工具箱
 // @namespace    https://linux.do/
-// @version      2.11.0
+// @version      2.11.1
 // @description  LINUX DO 工具箱：八个四字功能独立开关——密文自解（Base16/Base32/Base58/Base64/Base64URL）、原生复制、外链解锁、随读回应、已读提速、过盾重试、只看此人、内容过滤（头像下快速添加/撤销本地用户规则；水贴预设与话题/帖子/用户规则，默认关闭，仅本地可恢复折叠）。统一两级面板。仓库 github.com/hawchou1995/linuxdo-toolbox · 论坛 qingju.me
 // @author       牛来 · XAUTHUB · HawChow · Sunwuyuan · adodo · Pipecraft
 // @match        https://linux.do/*
@@ -11,13 +11,15 @@
 // @run-at       document-start
 // @noframes
 // @license      MIT
-// @homepageURL  https://github.com/hawchou1995/linuxdo-toolbox
+// @homepageURL  https://greasyfork.org/zh-CN/scripts/596713
 // @supportURL   https://qingju.me/
 // @downloadURL https://update.greasyfork.org/scripts/596713/LINUX%20DO%20%E5%B7%A5%E5%85%B7%E7%AE%B1.user.js
 // @updateURL https://update.greasyfork.org/scripts/596713/LINUX%20DO%20%E5%B7%A5%E5%85%B7%E7%AE%B1.meta.js
 // ==/UserScript==
 
 /*
+ * v2.11.1 —— 将默认主页链接从 GitHub 改为 GreasyFork 脚本页，避免脚本猫打开主页时跳转到 GitHub；功能逻辑不变。
+ *
  * v2.11.0 —— 内容过滤新增头像下「本地屏蔽」快捷入口：
  *          覆盖话题帖子、用户资料和用户卡片；优先按数字用户 ID 精确匹配，无 ID 时回退用户名。
  *          点击添加/撤销仅本地的用户规则；总开关关闭时仅在保存成功后自动开启，不修改站点忽略/静音设置。
@@ -1648,7 +1650,7 @@
       '<button type="button" class="mini" data-cfg-reset-all="1" title="恢复原七项参数；私人内容过滤规则保持不变">一键全默认</button>',
       '<span class="hint">参数改动即时生效，不用刷新</span>',
       '<div class="about">',
-      '<span class="ab-name">LINUX DO 工具箱 v2.11.0</span>',
+      '<span class="ab-name">LINUX DO 工具箱 v2.11.1</span>',
       '<a class="ab-link" href="https://github.com/hawchou1995/linuxdo-toolbox" target="_blank" rel="noopener noreferrer">GitHub 仓库</a>',
       '<a class="ab-link" href="https://qingju.me/" target="_blank" rel="noopener noreferrer">qingju.me 论坛</a>',
       '<span class="ab-note">源码开源 · 欢迎来青橘（qingju.me）一起折腾</span>',
@@ -5175,7 +5177,7 @@
   // ---------- 测试/调试出口（无副作用） ----------
   try {
     window.__LDB64__ = {
-      version: '2.11.0',                        // 与脚本头 @version 保持同步（供调试与自检读取）
+      version: '2.11.1',                        // 与脚本头 @version 保持同步（供调试与自检读取）
       flags: FLAGS,
       contentFilter: ContentFilter,
       CFG: CFG,

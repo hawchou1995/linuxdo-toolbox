@@ -120,3 +120,9 @@
 **Linux.do 真机边界**：bsk 登录态页面核对了三个实际头像 DOM，并用临时探针通过内容过滤 API 做 add/undo；探针捕获的配置、开关与覆盖层样式均回滚。bsk 物理 selector 点击被全视口覆盖层超时，改用 bsk evaluate 的 DOM click；线上实际帖子视觉折叠未确认，相关精确命中/折叠/撤销由离线 DOM/Worker 自检覆盖。只测试 Linux.do，未操作其他 Discourse 论坛。
 
 **GitHub 范围**：本次授权仅为 GreasyFork 发布，未推送 GitHub。`origin/main` 仍为 v2.10.1（`4cb42e6873d65126365936a9f2033353ac20aa8e`）；本地 `feature/content-filter` 保存 v2.11.0 候选。
+
+## v2.11.1：默认主页指向 GreasyFork
+
+日期：2026-10-16。版本从 v2.11.0 升至 v2.11.1。将 `@homepageURL` 改为 GreasyFork 596713 脚本页，避免脚本猫按主页元数据导航到 GitHub；`@downloadURL` 与 `@updateURL` 保持不变。面板版本与调试出口同步到 2.11.1，运行功能逻辑不变。
+
+**离线验证**：`node --check linuxdo-toolbox.user.js`、`node --check scripts/content-filter.js`、`node --check scripts/run-selfcheck.cjs` 通过；`node scripts/build-content-filter.cjs --check` exact match；`node scripts/run-selfcheck.cjs` **219/219 PASS**；`git diff --check` 通过。

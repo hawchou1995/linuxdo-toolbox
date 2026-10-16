@@ -92,7 +92,7 @@ scripts/content-filter-selfcheck.html # 过滤专项与刷新持久化
 node scripts/run-selfcheck.cjs
 # → 合计 219 项通过（原 103 项回归 + 内容过滤专项）；RESULT: PASS
 ```
-v2.11.0 新增头像下「本地屏蔽」入口（帖子、资料、用户卡片），复用内容过滤规则并可撤销；v2.10.1 修开关点击与重做内容过滤看板，v2.10.0 新增统一内容过滤。验收记录见 [内容过滤验收记录](docs/content-filter-verification.md)。
+v2.11.1 修正脚本默认主页链接，改为 GreasyFork 脚本页，避免脚本猫打开脚本主页后跳转到 GitHub；v2.11.0 新增头像下「本地屏蔽」入口（帖子、资料、用户卡片），复用内容过滤规则并可撤销；v2.10.1 修开关点击与重做内容过滤看板，v2.10.0 新增统一内容过滤。验收记录见 [内容过滤验收记录](docs/content-filter-verification.md)。
 
 自检覆盖原功能与新增过滤；原 103 项断言保持不变。
 **①「密文自解」**：Base16/Base32/Base58/Base64/Base64URL 字节向量、前导零、非法载荷、同结果合并与不同结果歧义；
