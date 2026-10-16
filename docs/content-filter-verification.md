@@ -143,4 +143,4 @@
 
 **GreasyFork 操作范围**：更新已有脚本条目 596713，未新建条目。
 
-**GitHub `main` 推送与回抓**：`feature/content-filter` 快进推送到 `origin/main`；本地 HEAD、`git ls-remote origin refs/heads/main` 与 GitHub API 三方均为 `db2ad5c298386ea1dd84e3814a8eebe5f7eee4bf`。GitHub raw `linuxdo-toolbox.user.js` 为 286429 bytes / SHA-256 `FBE51D44C9A3753D6078E8C9E01AD7C056CB24ECA5D3FA0763374796B512FBAB`，`@version 2.12.0`，与本地和 GreasyFork CDN 逐字节一致。
+**GitHub `main` 推送与回抓**：v2.12.0 代码提交 `db2ad5c298386ea1dd84e3814a8eebe5f7eee4bf` 与发布回执提交 `64338b5578fccf242c0994e942b60d378a956d04` 均已推送到 `origin/main`。GitHub raw `linuxdo-toolbox.user.js` 为 286429 bytes / SHA-256 `FBE51D44C9A3753D6078E8C9E01AD7C056CB24ECA5D3FA0763374796B512FBAB`，`@version 2.12.0`，与本地和 GreasyFork CDN 逐字节一致。
