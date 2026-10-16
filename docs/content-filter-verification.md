@@ -1,4 +1,4 @@
-# LINUX DO 工具箱：内容过滤、面板开关与看板修复验收记录（v2.10.0 → v2.10.1）
+# LINUX DO 工具箱：内容过滤与快速本地屏蔽验收记录（v2.10.0 → v2.11.0）
 
 日期：2026-10-15。基线：`a1d57732a57926fec9a844fb914f4530871e6d91`（v2.9.0）；v2.10.1 起点 `5c226c24db8237bd65e2d1b3a5c1168d22543d80`。
 
@@ -108,3 +108,15 @@
 | 8 | met | 一次指定模型 review、主代理修复与 193 项复测、语法／构建一致性检查、真实登录态交互；暂存差异检查结果见最终交付。v2.10.1 复测扩到 200 项，本表未变。 |
 | 9 | met | commit `00dca03a3de6c2cdfb7cf4ab1bbd2068b6d041c7` 已推送 GitHub main；GreasyFork 596713 版本历史出现 v2.10.0；本地 / GitHub raw / GF CDN 三方同为 265802 bytes / `1E0DE9AE…`。 |
 | 10 | met | 汇总见本文；会话归还、进程 0、临时任务删除、临时规则清除。配置还原的披露见「配置还原」一节：Linux.do 精确恢复原值，另两站为脚本默认值（原值不可考，如实标注）。 |
+
+## v2.11.0：头像下快速本地屏蔽
+
+日期：2026-10-16。版本从 v2.10.1 升至 v2.11.0，新增话题帖子、用户资料和用户卡片头像下的本地用户规则快捷入口；数字用户 ID 优先、无 ID 回退用户名；可撤销，不调用站点忽略/静音设置。
+
+**离线验证**：`node scripts/build-content-filter.cjs --check` exact match；`node --check scripts/content-filter.js`、`node --check linuxdo-toolbox.user.js` 与 `node --check scripts/run-selfcheck.cjs` 通过；`node scripts/run-selfcheck.cjs` **219/219 PASS**；`git diff --check` 通过。
+
+**GreasyFork 596713 发布**：已更新既有条目，版本历史匿名回抓 HTTP 200 并出现 `v2.11.0` 与对应 changelog；本地脚本与 GF CDN 回抓均为 **284651 bytes**，SHA-256 `C8DF0FF4BE30729FF02F3B0731480F2F5BBE5DAD3958AABFCCF9076CC2FB4D38`，版本、快速按钮标记和三处版本标记一致。提交前 GF 表单内代码 hash 与本地相同；附加说明 10465 bytes / `E849CD680E14135F43CA495D5469A2E18612B39E14169FE083170F41D2887AB7`，changelog 437 bytes / `22F20CBF78BCCBB90E099ED570795B7C770171A0ED8B1D22699E132F0113C74A`；`@description` 215 字符、公开类型、非成人内容。
+
+**Linux.do 真机边界**：bsk 登录态页面核对了三个实际头像 DOM，并用临时探针通过内容过滤 API 做 add/undo；探针捕获的配置、开关与覆盖层样式均回滚。bsk 物理 selector 点击被全视口覆盖层超时，改用 bsk evaluate 的 DOM click；线上实际帖子视觉折叠未确认，相关精确命中/折叠/撤销由离线 DOM/Worker 自检覆盖。只测试 Linux.do，未操作其他 Discourse 论坛。
+
+**GitHub 范围**：本次授权仅为 GreasyFork 发布，未推送 GitHub。`origin/main` 仍为 v2.10.1（`4cb42e6873d65126365936a9f2033353ac20aa8e`）；本地 `feature/content-filter` 保存 v2.11.0 候选。
