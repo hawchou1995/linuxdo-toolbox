@@ -142,3 +142,5 @@
 **提交前字段核验**：源码 286429 bytes / `FBE51D44C9A3753D6078E8C9E01AD7C056CB24ECA5D3FA0763374796B512FBAB`；附加信息 10988 bytes / `0FD876BA8E5C3593E234444CCFCB1CC697FB6EBB5B626BDE300639A70D94CC64`（Markdown）；更新日志 211 bytes / `32CDECD375D1E3662173EA24D866C6D94BFCA31F4BA630B696536FC340BC7132`；脚本类型公开，成人标记未选。
 
 **GreasyFork 操作范围**：更新已有脚本条目 596713，未新建条目。
+
+**GitHub `main` 推送与回抓**：`feature/content-filter` 快进推送到 `origin/main`；本地 HEAD、`git ls-remote origin refs/heads/main` 与 GitHub API 三方均为 `db2ad5c298386ea1dd84e3814a8eebe5f7eee4bf`。GitHub raw `linuxdo-toolbox.user.js` 为 286429 bytes / SHA-256 `FBE51D44C9A3753D6078E8C9E01AD7C056CB24ECA5D3FA0763374796B512FBAB`，`@version 2.12.0`，与本地和 GreasyFork CDN 逐字节一致。
