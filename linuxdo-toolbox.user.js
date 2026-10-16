@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LINUX DO 工具箱
 // @namespace    https://linux.do/
-// @version      2.10.1
-// @description  LINUX DO 工具箱：八个四字功能独立开关——密文自解（Base16/Base32/Base58/Base64/Base64URL）、原生复制、外链解锁、随读回应、已读提速、过盾重试、只看此人、内容过滤（短文本水贴预设与话题/帖子/用户规则，默认关闭，仅本地可恢复折叠）。统一两级面板，保留原七项配置。仓库 github.com/hawchou1995/linuxdo-toolbox · 论坛 qingju.me
+// @version      2.11.0
+// @description  LINUX DO 工具箱：八个四字功能独立开关——密文自解（Base16/Base32/Base58/Base64/Base64URL）、原生复制、外链解锁、随读回应、已读提速、过盾重试、只看此人、内容过滤（头像下快速添加/撤销本地用户规则；水贴预设与话题/帖子/用户规则，默认关闭，仅本地可恢复折叠）。统一两级面板。仓库 github.com/hawchou1995/linuxdo-toolbox · 论坛 qingju.me
 // @author       牛来 · XAUTHUB · HawChow · Sunwuyuan · adodo · Pipecraft
 // @match        https://linux.do/*
 // @match        https://qingju.me/*
@@ -18,6 +18,11 @@
 // ==/UserScript==
 
 /*
+ * v2.11.0 —— 内容过滤新增头像下「本地屏蔽」快捷入口：
+ *          覆盖话题帖子、用户资料和用户卡片；优先按数字用户 ID 精确匹配，无 ID 时回退用户名。
+ *          点击添加/撤销仅本地的用户规则；总开关关闭时仅在保存成功后自动开启，不修改站点忽略/静音设置。
+ *          离线 Chromium 自检 219/219。
+ *
  * v2.10.1 —— 修「开关点了没反应」+ 重做「内容过滤」子看板：
  *           开关的可见轨道不再吞掉点击（轨道让位给透明 checkbox，整枚开关变成 label）。
  *           「内容过滤」改用面板既有卡片/分区/胶囊样式与设计变量；正则超时、恢复语义不变。
@@ -1643,7 +1648,7 @@
       '<button type="button" class="mini" data-cfg-reset-all="1" title="恢复原七项参数；私人内容过滤规则保持不变">一键全默认</button>',
       '<span class="hint">参数改动即时生效，不用刷新</span>',
       '<div class="about">',
-      '<span class="ab-name">LINUX DO 工具箱 v2.10.1</span>',
+      '<span class="ab-name">LINUX DO 工具箱 v2.11.0</span>',
       '<a class="ab-link" href="https://github.com/hawchou1995/linuxdo-toolbox" target="_blank" rel="noopener noreferrer">GitHub 仓库</a>',
       '<a class="ab-link" href="https://qingju.me/" target="_blank" rel="noopener noreferrer">qingju.me 论坛</a>',
       '<span class="ab-note">源码开源 · 欢迎来青橘（qingju.me）一起折腾</span>',
@@ -5170,7 +5175,7 @@
   // ---------- 测试/调试出口（无副作用） ----------
   try {
     window.__LDB64__ = {
-      version: '2.10.1',                        // 与脚本头 @version 保持同步（供调试与自检读取）
+      version: '2.11.0',                        // 与脚本头 @version 保持同步（供调试与自检读取）
       flags: FLAGS,
       contentFilter: ContentFilter,
       CFG: CFG,
