@@ -126,3 +126,7 @@
 日期：2026-10-16。版本从 v2.11.0 升至 v2.11.1。将 `@homepageURL` 改为 GreasyFork 596713 脚本页，避免脚本猫按主页元数据导航到 GitHub；`@downloadURL` 与 `@updateURL` 保持不变。面板版本与调试出口同步到 2.11.1，运行功能逻辑不变。
 
 **离线验证**：`node --check linuxdo-toolbox.user.js`、`node --check scripts/content-filter.js`、`node --check scripts/run-selfcheck.cjs` 通过；`node scripts/build-content-filter.cjs --check` exact match；`node scripts/run-selfcheck.cjs` **219/219 PASS**；`git diff --check` 通过。
+
+**GreasyFork 596713 发布与回抓**：已通过 bsk 更新既有公开条目；脚本页显示版本 2.11.1。匿名回抓版本历史 HTTP 200，含 v2.11.1 与对应 changelog；CDN HTTP 200、`text/javascript; charset=utf-8`，源码 **284802 bytes**，SHA-256 `FEB3BA8ACB27573E6F5C314BB5384F8D80F5BD3773F6439E3EBC6B8365AA06E0`，与本地逐字节一致。CDN 元数据确认 `@homepageURL` 为 GreasyFork 596713、`@match` 仍为 3/3，`@downloadURL` / `@updateURL` 保持原值。
+
+**发布表单核验**：提交前页面 textarea 实值与本地脚本 SHA-256 一致；附加说明 10662 bytes / `F72BFAD1338A02980F2DBA97C409922C67B40898D511E6A3BFF49660EBB3AF6A`，更新日志 183 bytes / `78487A7E61B6FAD9234FE703480E5B7793ECE4BAAEBA4C4DF6EB3E4B65302B03`，均与本地发布文本一致；公开脚本类型保留，成人内容未勾选。未推送 GitHub。
