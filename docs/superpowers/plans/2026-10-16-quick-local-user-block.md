@@ -15,6 +15,7 @@
 - 只过滤帖子作者与话题发起者，不匹配最近回复者、引用或提及对象。
 - 配置总规则上限仍为 200 条；存储失败时不改当前配置，不自动开启总开关。
 - 新功能的发布范围未获批准；只提交本地 Git 变更，不推送、不发布。
+- 真实页面验收范围仅为 Linux.do；不要求在其他 Discourse 论坛操作或验收。
 
 ---
 
@@ -25,15 +26,15 @@
 - Modify: `scripts/content-filter-selfcheck.html`
 
 **Interfaces:**
-- `getQuickUserState(identity)` accepts `{ userId?: string|null, author?: string|null }` and returns `{ canMatch, blocked, ruleId }`.
+- `getQuickUserState(identity)` accepts `{ userId?: string|null, author?: string|null }` and returns `{ canMatch, blocked, exists, enabled, ruleId }`.
 - `toggleQuickUser(identity)` returns `{ ok, blocked, action, error? }`; `action` is `added`, `removed`, or `enabled`.
 - A quick rule uses `target: "user"`, one exact condition, and `quickUser: { userId: string|null, author: string|null }` metadata. If the numeric ID exists, its sole condition is `userId`; otherwise its sole condition is `author`.
 
-- [ ] Add self-checks for ID preference, username fallback, same-identity recognition when another view lacks ID, add/remove/re-enable transitions, 200-rule limit and storage-write failure.
-- [ ] Run the existing self-check and verify these tests fail before the API exists.
-- [ ] Extend `validate` to accept only well-formed `quickUser` metadata on a one-condition `target:user` exact rule; preserve existing JSON shape for all ordinary rules.
-- [ ] Implement state lookup and toggle through the existing `save` path. Add/re-enable the quick rule before calling `setEnabled(true)` when global filtering is off; do not enable when save fails.
-- [ ] Run `node scripts/run-selfcheck.cjs` and verify the API checks pass while existing assertions remain green.
+- [x] Add self-checks for ID preference, username fallback, same-identity recognition when another view lacks ID, add/remove/re-enable transitions, 200-rule limit and storage-write failure.
+- [x] Run the existing self-check and verify these tests fail before the API exists.
+- [x] Extend `validate` to accept only well-formed `quickUser` metadata on a one-condition `target:user` exact rule; preserve existing JSON shape for all ordinary rules.
+- [x] Implement state lookup and toggle through the existing `save` path. Add/re-enable the quick rule before calling `setEnabled(true)` when global filtering is off; do not enable when save fails.
+- [x] Run `node scripts/run-selfcheck.cjs` and verify the API checks pass while existing assertions remain green.
 
 ### Task 2: Three avatar button mount points and state synchronization
 
@@ -45,12 +46,12 @@
 - The delegated mount routine creates one `.ldkit-quickblock-host[data-ldkit-quickblock]` below a discovered avatar and one button with `aria-pressed="true|false"`.
 - `identityForAvatar(avatar, context)` uses `data-user-id`, `data-user-card`, `/u/<username>` links and, only on the matching summary route, the route username. It never uses display-name text or avatar alt text.
 
-- [ ] Add fixtures for `.topic-post .topic-avatar .post-avatar`, `/u/alice/summary .user-profile-avatar`, and `.user-card .user-card-avatar`, including ID and username-only cases.
-- [ ] Assert each fixture initially has one button, rescanning keeps one, and a dynamically inserted/replaced avatar receives one.
-- [ ] Implement bounded selectors for those three contexts and insert a sibling host immediately after the avatar wrapper; prevent card click bubbling.
-- [ ] Render `本地屏蔽` when inactive and `撤销屏蔽` when active; sync `aria-pressed`, title and text after rule save/remove/storage events and route updates.
-- [ ] Add CSS that centers a compact button beneath the avatar without changing site avatar elements.
-- [ ] Run the focused self-check and verify all three mounted-button transitions pass.
+- [x] Add fixtures for `.topic-post .topic-avatar .post-avatar`, `/u/alice/summary .user-profile-avatar`, and `.user-card .user-card-avatar`, including ID and username-only cases.
+- [x] Assert each fixture initially has one button, rescanning keeps one, and a dynamically inserted/replaced avatar receives one.
+- [x] Implement bounded selectors for those three contexts and insert a sibling host immediately after the avatar wrapper; prevent card click bubbling.
+- [x] Render `本地屏蔽` when inactive and `撤销屏蔽` when active; sync `aria-pressed`, title and text after rule save/remove/storage events and route updates.
+- [x] Add CSS that centers a compact button beneath the avatar without changing site avatar elements.
+- [x] Run the focused self-check and verify all three mounted-button transitions pass.
 
 ### Task 3: Build, regression checks and evidence
 
@@ -59,9 +60,9 @@
 - Modify: `docs/content-filter.md`
 - Modify: `docs/superpowers/specs/2026-10-16-quick-local-user-block-design.md`
 
-- [ ] Update `scripts/content-filter.js` user-facing design notes and the usage document to document quick buttons, identity precedence and undo behavior.
-- [ ] Run `node scripts/build-content-filter.cjs`, then `node scripts/build-content-filter.cjs --check`.
-- [ ] Run `node --check linuxdo-toolbox.user.js`, `node --check scripts/content-filter.js`, and `node scripts/run-selfcheck.cjs`.
-- [ ] Run `git diff --check`; verify the original 200 assertions and all new assertions pass.
-- [ ] Attempt real logged-in page acceptance through the existing BrowserSkill session; if its daemon cannot be started from the host, record the exact failure and leave this acceptance explicitly outstanding.
-- [ ] Inspect final diff/status; commit the design/plan before implementation and commit verified implementation separately. Do not push or publish.
+- [x] Update `scripts/content-filter.js` user-facing design notes and the usage document to document quick buttons, identity precedence and undo behavior.
+- [x] Run `node scripts/build-content-filter.cjs`, then `node scripts/build-content-filter.cjs --check`.
+- [x] Run `node --check linuxdo-toolbox.user.js`, `node --check scripts/content-filter.js`, and `node scripts/run-selfcheck.cjs`.
+- [x] Run `git diff --check`; verify the original 200 assertions and all new assertions pass (219/219 total).
+- [x] Use bsk with the authenticated Chrome profile on Linux.do only. A user-tab borrow confirmation timed out, so task-created Linux.do tabs were used. Temporary add/undo probes ran on post, summary, and card DOMs; no probe rule remains, the contentFilter flag is restored, and the final probe confirmed its captured config bytes and overlay style were restored. BSK physical selector click timed out under the overlay, so the reversible DOM click was dispatched through bsk evaluate. Live visual post folding was not confirmed; local DOM/worker tests cover it.
+- [ ] Inspect final diff/status and commit the verified implementation separately; do not push or publish.

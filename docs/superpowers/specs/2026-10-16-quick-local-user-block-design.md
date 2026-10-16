@@ -30,6 +30,13 @@
 - 挂载采用带固定 data 标记的专属宿主，重复扫描幂等；复用内容过滤既有 MutationObserver 和周期扫描适配 SPA/异步卡片更新。规则保存、删除、跨页 storage 更新后同步所有可见按钮状态。
 - 用户卡片内按钮阻止冒泡，避免点击时触发头像链接或关闭卡片。
 
+
+## Linux.do DOM 实测（2026-10-16）
+
+- 话题帖子实际使用 `.topic-post .topic-avatar .post-avatar`；作者身份可从头像区 `data-user-card` 与帖子树 `data-user-id` 取得。
+- `/u/<username>/summary` 实际包含 `.user-profile-avatar`；头像节点没有用户 ID，路由用户名是有效回退来源。
+- 用户卡片实际包含 `.user-card .user-card-avatar`，位于 `.user-card-avatar-wrapper` 内；头像区可从 `/u/<username>` 链接取得用户名，卡片 DOM 未提供 `data-user-id`。
+- 登录态 DOM 只在 Linux.do 上核对；本任务不要求在其他 Discourse 论坛验收。
 ## 范围与约束
 
 - 规则写入 `ldkit.contentFilter.v1` 的既有 `rules` 数组，服从现有 200 条总规则上限、字段校验、持久化和本地显示折叠/恢复机制。

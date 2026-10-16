@@ -4536,6 +4536,15 @@
             if (!p || !FIELDS[r.target].includes(p.field)) throw Error('字段不适用于所选对象：' + (p && p.field));
             checkPattern(p, /Id$/.test(p.field));
           });
+          if (r.quickUser !== undefined) {
+            const q = r.quickUser;
+            if (r.target !== 'user' || !q || typeof q !== 'object' || Array.isArray(q) || !Object.prototype.hasOwnProperty.call(q, 'userId') || !Object.prototype.hasOwnProperty.call(q, 'author')) throw Error('快速用户规则元信息无效');
+            const validId = q.userId === null || (typeof q.userId === 'string' && /^\d+$/.test(q.userId));
+            const validAuthor = q.author === null || (typeof q.author === 'string' && !!q.author.trim() && q.author.length <= 200);
+            if (!validId || !validAuthor || (!q.userId && !q.author) || r.conditions.length !== 1) throw Error('快速用户规则身份无效');
+            const condition = r.conditions[0], field = q.userId ? 'userId' : 'author', value = q.userId || q.author;
+            if (condition.field !== field || condition.op !== 'exact' || condition.value !== value) throw Error('快速用户规则条件必须与主身份一致');
+          }
         });
         if (JSON.stringify(c).length > 200000) throw Error('配置过大');
         return { ok: true, config: c };
@@ -4615,7 +4624,7 @@
       if (!v.ok) { status(v.error); return v; }
       try { localStorage.setItem(KEY, JSON.stringify(v.config)); }
       catch (e) { const error = '未保存：本地存储不可写'; status(error); return { ok: false, error }; }
-      config = v.config; epoch++; restoreAll(); renderRules(); schedule(); status('规则已保存');
+      config = v.config; epoch++; restoreAll(); renderRules(); schedule(); syncQuickBlockButtons(); status('规则已保存');
       return { ok: true };
     }
     function status(text) {
@@ -4625,13 +4634,62 @@
       if (!el) return;
       if (el.textContent !== text) el.textContent = text;
       el.classList.toggle('cf-bad', /^(未保存|匹配批次|正则)/.test(text));
-      el.classList.toggle('cf-good', /^(规则已保存|已复制|内容过滤已开启|示例)/.test(text));
+      el.classList.toggle('cf-good', /^(规则已保存|已复制|内容过滤已开启|示例|已本地屏蔽|已撤销本地屏蔽)/.test(text));
     }
     function setEnabled(value) {
       setFlag('contentFilter', value); epoch++;
       if (!value) { if (fetchController) fetchController.abort(); fetchController = null; fetchRoute = ''; fetchAttempts = 0; retryAt = 0; restoreAll(); status('内容过滤已关闭'); }
       else { status('内容过滤已开启'); schedule(); }
       if (KitUI.onDot) KitUI.onDot('contentFilter', value ? 'on' : 'off');
+      syncQuickBlockButtons();
+    }
+    function normalizeQuickIdentity(identity) {
+      const rawId = String(identity && identity.userId != null ? identity.userId : '').trim();
+      const rawAuthor = String(identity && identity.author != null ? identity.author : '').trim();
+      return { userId: rawId.length <= 100 && /^\d+$/.test(rawId) ? rawId : null, author: rawAuthor.length <= 200 ? (rawAuthor || null) : null };
+    }
+    function sameQuickIdentity(saved, candidate) {
+      if (saved.userId && candidate.userId) return saved.userId === candidate.userId;
+      return !!(saved.author && candidate.author && saved.author.toLowerCase() === candidate.author.toLowerCase());
+    }
+    function getQuickUserState(identity) {
+      const candidate = normalizeQuickIdentity(identity);
+      if (!candidate.userId && !candidate.author) return { canMatch: false, blocked: false, exists: false, enabled: false, ruleId: null };
+      const rule = config.rules.find(r => r.quickUser && sameQuickIdentity(r.quickUser, candidate));
+      return { canMatch: true, blocked: !!(rule && rule.enabled && isOn('contentFilter')), exists: !!rule, enabled: !!(rule && rule.enabled), ruleId: rule ? rule.id : null };
+    }
+    function quickRuleId(identity) {
+      const source = identity.userId ? 'id:' + identity.userId : 'author:' + identity.author;
+      let hash = 2166136261;
+      for (let i = 0; i < source.length; i++) { hash ^= source.charCodeAt(i); hash = Math.imul(hash, 16777619); }
+      return 'quick-user-' + (hash >>> 0).toString(36);
+    }
+    function toggleQuickUser(identity) {
+      const candidate = normalizeQuickIdentity(identity);
+      if (!candidate.userId && !candidate.author) {
+        const error = '无法屏蔽：未取得数字用户 ID 或用户名'; status(error); return { ok: false, blocked: false, action: null, error };
+      }
+      const state = getQuickUserState(candidate), next = JSON.parse(JSON.stringify(config));
+      let action;
+      if (state.ruleId) {
+        const rule = next.rules.find(r => r.id === state.ruleId);
+        if (rule.enabled && isOn('contentFilter')) {
+          next.rules = next.rules.filter(r => r.id !== state.ruleId); action = 'removed';
+        } else { rule.enabled = true; action = 'enabled'; }
+      } else {
+        const field = candidate.userId ? 'userId' : 'author', value = candidate.userId || candidate.author;
+        let id = quickRuleId(candidate), suffix = 1;
+        while (next.rules.some(r => r.id === id)) id = quickRuleId(candidate) + '-' + suffix++;
+        next.rules.push({ id, name: ('快速屏蔽：' + (candidate.author || ('用户 ID ' + candidate.userId))).slice(0, 100), enabled: true, target: 'user', conditions: [{ field, op: 'exact', value }], quickUser: candidate });
+        action = 'added';
+      }
+      const result = save(next);
+      if (!result.ok) return { ok: false, blocked: getQuickUserState(candidate).blocked, action: null, error: result.error };
+      if (action !== 'removed' && !isOn('contentFilter')) setEnabled(true);
+      syncQuickBlockButtons();
+      const after = getQuickUserState(candidate);
+      status(action === 'removed' ? '已撤销本地屏蔽' : '已本地屏蔽 ' + (candidate.author || ('用户 ID ' + candidate.userId)));
+      return { ok: true, blocked: after.blocked, action };
     }
     function restore(el) {
       const state = states.get(el);
@@ -4798,10 +4856,107 @@
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => { timer = null; scan(); }, 120);
     }
+    function decodeUserLink(link) {
+      const href = link && link.getAttribute && link.getAttribute('href');
+      if (!href) return null;
+      try {
+        const url = new URL(href, location.href);
+        if (url.origin !== location.origin) return null;
+        const match = url.pathname.match(/^\/u\/([^/]+)/);
+        return match ? decodeURIComponent(match[1]) : null;
+      } catch (e) { return null; }
+    }
+    function profileRouteUsername() {
+      const match = location.pathname.match(/^\/u\/([^/]+)\/summary\/?$/);
+      if (!match) return null;
+      try { return decodeURIComponent(match[1]); } catch (e) { return match[1]; }
+    }
+    function identityForAvatar(avatar, owner, allowRouteUsername, readDescendantId) {
+      const nodes = [];
+      for (let node = avatar; node; node = node.parentElement) { nodes.push(node); if (node === owner) break; }
+      if (readDescendantId && owner && owner.querySelectorAll) nodes.push(...owner.querySelectorAll('[data-user-id]'));
+      let userId = null, author = null;
+      for (const node of nodes) {
+        const value = node.getAttribute && node.getAttribute('data-user-id');
+        if (!userId && value && /^\d+$/.test(value)) userId = value;
+        const card = node.getAttribute && node.getAttribute('data-user-card');
+        if (!author && card && card.trim()) author = card.trim();
+      }
+      if (!author && avatar && avatar.querySelector) {
+        const node = avatar.matches && avatar.matches('[data-user-card]') ? avatar : avatar.querySelector('[data-user-card]');
+        const card = node && node.getAttribute('data-user-card');
+        if (card && card.trim()) author = card.trim();
+      }
+      if (!author && owner && owner.querySelectorAll) {
+        for (const link of owner.querySelectorAll('a[href^="/u/"],a[href^="https://"]')) {
+          author = decodeUserLink(link);
+          if (author) break;
+        }
+      }
+      if (!author && allowRouteUsername) author = profileRouteUsername();
+      return normalizeQuickIdentity({ userId, author });
+    }
+    function syncQuickBlockButtons() {
+      document.querySelectorAll('.ldkit-quickblock-host[data-ldkit-quickblock] button').forEach(button => {
+        const host = button.parentElement;
+        const state = getQuickUserState({ userId: host.dataset.userId || null, author: host.dataset.author || null });
+        const pressed = state.blocked ? 'true' : 'false';
+        const label = state.blocked ? '撤销屏蔽' : (state.exists ? '启用屏蔽' : '本地屏蔽');
+        const title = state.blocked ? '撤销此用户的本地屏蔽规则' : (state.exists ? '启用已保存的本地屏蔽规则' : '仅在本机折叠此用户作为作者或话题发起者的内容');
+        if (button.getAttribute('aria-pressed') !== pressed) button.setAttribute('aria-pressed', pressed);
+        if (button.textContent !== label) button.textContent = label;
+        if (button.title !== title) button.title = title;
+      });
+    }
+    function scanQuickBlockButtons() {
+      const targets = [], add = (avatar, owner, after, parent, allowRouteUsername, readDescendantId) => {
+        if (!avatar || !after || !parent || !owner) return;
+        const identity = identityForAvatar(avatar, owner, allowRouteUsername, readDescendantId);
+        if (identity.userId || identity.author) targets.push({ avatar, owner, after, parent, identity });
+      };
+      document.querySelectorAll('.topic-post').forEach(post => {
+        const avatar = post.querySelector('.topic-avatar .post-avatar') || post.querySelector('.topic-avatar');
+        if (avatar) add(avatar, post, avatar, avatar.parentElement, false, true);
+      });
+      document.querySelectorAll('.user-card').forEach(card => {
+        const avatar = card.querySelector('.user-card-avatar') || card.querySelector('.user-card-avatar-wrapper .avatar') || card.querySelector('.avatar-wrapper') || card.querySelector('.avatar');
+        if (avatar) {
+          const wrapper = avatar.closest('.user-card-avatar-wrapper') || avatar.parentElement;
+          add(avatar, card, avatar, wrapper, false, true);
+        }
+      });
+      if (profileRouteUsername()) {
+        const profileAvatar = document.querySelector('.user-profile-avatar');
+        if (profileAvatar) {
+          const avatar = profileAvatar.querySelector(':scope > .avatar') || profileAvatar.firstElementChild || profileAvatar;
+          const parent = avatar === profileAvatar ? profileAvatar.parentElement : profileAvatar;
+          add(avatar, profileAvatar, avatar, parent, true, false);
+        }
+      }
+      const live = new Set();
+      targets.forEach(target => {
+        let host = target.after.nextElementSibling;
+        if (!host || !host.matches('.ldkit-quickblock-host[data-ldkit-quickblock]') || host.parentElement !== target.parent) {
+          host = document.createElement('div'); host.className = 'ldkit-quickblock-host'; host.setAttribute('data-ldkit-quickblock', '1');
+          const button = document.createElement('button'); button.type = 'button'; button.addEventListener('click', event => {
+            event.preventDefault(); event.stopPropagation();
+            const current = event.currentTarget.parentElement;
+            toggleQuickUser({ userId: current.dataset.userId || null, author: current.dataset.author || null });
+          });
+          host.appendChild(button); target.after.insertAdjacentElement('afterend', host);
+        }
+        const userId = target.identity.userId || '', author = target.identity.author || '';
+        if (host.dataset.userId !== userId) host.dataset.userId = userId;
+        if (host.dataset.author !== author) host.dataset.author = author;
+        live.add(host);
+      });
+      document.querySelectorAll('.ldkit-quickblock-host[data-ldkit-quickblock]').forEach(host => { if (!live.has(host)) host.remove(); });
+      syncQuickBlockButtons();
+    }
     function init() {
       if (document.getElementById('ldkit-filter-style')) return;
       const style = document.createElement('style'); style.id = 'ldkit-filter-style';
-      style.textContent = '.ldkit-filter-folded:not(.topic-post),[data-ldkit-filter-folded="1"]:not(.topic-post){display:none!important}.topic-post[data-ldkit-filter-folded="1"]>:not(.ldkit-filter-placeholder){display:none!important}.ldkit-filter-placeholder{padding:8px;border:1px dashed var(--primary-low,#aaa);border-radius:6px;margin:5px 0;font-size:12px}.ldkit-filter-placeholder button{cursor:pointer;margin-left:8px}';
+      style.textContent = '.ldkit-filter-folded:not(.topic-post),[data-ldkit-filter-folded="1"]:not(.topic-post){display:none!important}.topic-post[data-ldkit-filter-folded="1"]>:not(.ldkit-filter-placeholder){display:none!important}.ldkit-filter-placeholder{padding:8px;border:1px dashed var(--primary-low,#aaa);border-radius:6px;margin:5px 0;font-size:12px}.ldkit-filter-placeholder button{cursor:pointer;margin-left:8px}.ldkit-quickblock-host{display:flex;justify-content:center;align-items:center;width:max-content;max-width:100%;margin:3px auto 0;position:relative;z-index:2}.ldkit-quickblock-host>button{display:block;margin:0;padding:2px 7px;border:1px solid var(--primary-low,#aaa);border-radius:999px;background:var(--secondary,#fff);color:var(--primary,#333);font:inherit;font-size:10px;line-height:1.35;white-space:nowrap;cursor:pointer}.ldkit-quickblock-host>button:hover{border-color:var(--tertiary,#08c)}.ldkit-quickblock-host>button[aria-pressed="true"]{border-color:var(--danger,#c33);color:var(--danger,#c33)}';
       document.head.appendChild(style);
       const observer = new MutationObserver(mutations => {
         if (mutations.some(m => {
@@ -4809,24 +4964,26 @@
           if (!el || el.closest('.ldkit-filter-placeholder, #ldb64-manual-host')) return false;
           if (m.type === 'childList' && [...m.addedNodes, ...m.removedNodes].every(n => n.nodeType === 1 && (n.classList.contains('ldkit-filter-placeholder') || n.id === 'ldb64-manual-host'))) return false;
           return true;
-        })) schedule();
+        })) { scanQuickBlockButtons(); schedule(); }
       });
       observer.observe(document.documentElement, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ['data-post-id', 'data-topic-id', 'data-post-number', 'data-user-card', 'data-user-id', 'data-category-id', 'href'] });
       setInterval(() => {
         const route = currentRoute();
         if (route !== lastRoute) { lastRoute = route; epoch++; metadata = null; metadataRoute = ''; fetchRoute = ''; fetchAttempts = 0; retryAt = 0; restoreAll(); }
+        scanQuickBlockButtons();
         if (isOn('contentFilter')) { enrich(); schedule(); }
       }, 1500);
       window.addEventListener('storage', e => {
-        if (e.key === KEY) { const v = validate(e.newValue || defaults()); if (v.ok) { config = v.config; epoch++; restoreAll(); renderRules(); schedule(); } }
+        if (e.key === KEY) { const v = validate(e.newValue || defaults()); if (v.ok) { config = v.config; epoch++; restoreAll(); renderRules(); schedule(); syncQuickBlockButtons(); } }
         if (e.key === FLAGS_KEY) { try {
           const f = JSON.parse(e.newValue); FLAGS.contentFilter = !!(f && f.contentFilter); epoch++; restoreAll();
           if (!FLAGS.contentFilter) { if (fetchController) fetchController.abort(); fetchController = null; fetchRoute = ''; fetchAttempts = 0; retryAt = 0; }
           if (KitUI.onDot) KitUI.onDot('contentFilter', FLAGS.contentFilter ? 'on' : 'off');
+          syncQuickBlockButtons();
           schedule();
         } catch (err) { /* Invalid foreign storage ignored. */ } }
       });
-      lastRoute = currentRoute(); enrich(); schedule();
+      lastRoute = currentRoute(); scanQuickBlockButtons(); enrich(); schedule();
     }
     function ruleExample(target) {
       return { id: 'rule-' + Date.now().toString(36), name: '新规则', enabled: true, target: target || 'topic', conditions: [{ field: target === 'user' ? 'author' : target === 'post' ? 'body' : 'title', op: target === 'user' ? 'exact' : 'keyword', value: '示例词' }] };
@@ -4894,7 +5051,7 @@
           const track = document.createElement('i'); sw.append(toggle, track);
           const name = document.createElement('span'); name.className = 'cf-rule-name'; name.textContent = r.name;
           row.append(sw, name);
-          if (!spam) { const chip = document.createElement('span'); chip.className = 'cf-chip'; chip.textContent = targetName(r.target); row.appendChild(chip); }
+          if (!spam) { const chip = document.createElement('span'); chip.className = 'cf-chip'; chip.textContent = targetName(r.target); row.appendChild(chip); if (r.quickUser) { const quick = document.createElement('span'); quick.className = 'cf-chip'; quick.textContent = '快速'; quick.title = '由头像下的快速本地屏蔽按钮创建'; row.appendChild(quick); } }
           const ops = document.createElement('span'); ops.className = 'cf-ops';
           const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'mini'; edit.textContent = '编辑';
           edit.addEventListener('click', () => openEditor(r, spam));
@@ -4959,6 +5116,11 @@
       submit.onclick = () => {
         draft.name = name.value;
         const c = JSON.parse(JSON.stringify(config)); const list = spam ? c.spam.rules : c.rules;
+        if (draft.quickUser) {
+          const p = draft.conditions.length === 1 ? draft.conditions[0] : null;
+          if (draft.target === 'user' && p && p.op === 'exact' && (p.field === 'userId' || p.field === 'author')) draft.quickUser = { userId: p.field === 'userId' ? p.value : null, author: p.field === 'author' ? p.value : null };
+          else delete draft.quickUser;
+        }
         const index = list.findIndex(r => r.id === draft.id); if (index < 0) list.push(draft); else list[index] = draft;
         if (save(c).ok) form.hidden = true;
       };
@@ -4973,7 +5135,7 @@
         root.appendChild(style);
       }
       mounted.innerHTML = [
-        '<p class="cf-note">仅本地折叠：不改站点忽略设置，也不改已读提速任务。关键词忽略大小写；同条 AND、多条 OR；标签与类别属于话题，ID 精确匹配。</p>',
+        '<p class="cf-note">仅本地折叠：不改站点忽略/静音设置。头像下「本地屏蔽」复用用户规则，优先按 ID、缺少 ID 时按用户名；关闭总开关时会自动开启。</p>',
         '<div class="svc-sec">水贴过滤</div>',
         '<div class="cf-card"><div class="cf-row">',
         '<label class="cf-lbl"><span class="sw"><input class="cf-spam-on" type="checkbox"><i></i></span>启用水贴预设</label>',
@@ -5001,7 +5163,7 @@
       };
       renderRules(); status(notice || (isOn('contentFilter') ? '内容过滤已开启' : '内容过滤默认关闭'));
     }
-    return { KEY, defaults, validate, save, evaluate, collect, scan, init, mount, setEnabled, getConfig: () => JSON.parse(JSON.stringify(config)), getNotice: () => notice };
+    return { KEY, defaults, validate, save, evaluate, collect, scan, init, mount, setEnabled, getQuickUserState, toggleQuickUser, scanQuickBlockButtons, syncQuickBlockButtons, getConfig: () => JSON.parse(JSON.stringify(config)), getNotice: () => notice };
   })();
   // END GENERATED CONTENT FILTER
 

@@ -47,6 +47,41 @@
     ok('CF05 取消编辑收起编辑器', cfPanel.querySelector('.cf-editor').hidden === true);
     const config = (...rules) => ({version:1,spam:{enabled:false,maxChars:30,rules:[]},rules});
     const rule = (target, field, op, value, flags) => ({id:'test',name:'合成测试',enabled:true,target,conditions:[{field,op,value,...(flags ? {flags} : {})}]});
+    if (typeof F.getQuickUserState !== 'function' || typeof F.toggleQuickUser !== 'function') {
+      ok('QUICK API 提供身份状态与快速切换', false, 'API 尚未实现');
+    } else {
+      F.setEnabled(false); F.save(config());
+      const initialQuick = F.getQuickUserState({userId:'8',author:'alice'});
+      ok('QUICK 空规则可识别 ID 与用户名身份', initialQuick.canMatch && !initialQuick.blocked);
+      const idToggle = F.toggleQuickUser({userId:'8',author:'alice'});
+      let quickRules = F.getConfig().rules;
+      ok('QUICK ID 优先新增并自动开启总开关', idToggle.ok && idToggle.action==='added' && idToggle.blocked && LD.flags.contentFilter && quickRules.length===1 && quickRules[0].conditions[0].field==='userId' && quickRules[0].conditions[0].value==='8');
+      ok('QUICK 跨入口用 ID 或用户名元信息认同一规则', F.getQuickUserState({userId:'8'}).blocked && F.getQuickUserState({author:'alice'}).blocked);
+      quickRules[0].enabled = false; F.save(config(...quickRules)); F.setEnabled(false);
+      const reenabled = F.toggleQuickUser({author:'alice'});
+      ok('QUICK 停用规则可通过按钮重新启用', reenabled.ok && reenabled.action==='enabled' && reenabled.blocked && LD.flags.contentFilter);
+      const removed = F.toggleQuickUser({userId:'8',author:'alice'});
+      ok('QUICK 再次点击移除快速规则', removed.ok && removed.action==='removed' && !removed.blocked && F.getConfig().rules.length===0);
+      const nameToggle = F.toggleQuickUser({author:'bob'});
+      quickRules = F.getConfig().rules;
+      ok('QUICK 无 ID 时精确回退到用户名', nameToggle.ok && quickRules.length===1 && quickRules[0].conditions[0].field==='author' && quickRules[0].conditions[0].value==='bob');
+      F.toggleQuickUser({author:'bob'}); F.setEnabled(false);
+      const fullRules = Array.from({length:200},(_,i)=>({id:'full-'+i,name:'满额规则',enabled:false,target:'topic',conditions:[{field:'title',op:'keyword',value:'x'}]}));
+      F.save(config(...fullRules));
+      const beforeLimit = JSON.stringify(F.getConfig());
+      const limitResult = F.toggleQuickUser({author:'overflow'});
+      ok('QUICK 规则上限失败不改配置或开启总开关', !limitResult.ok && JSON.stringify(F.getConfig())===beforeLimit && !LD.flags.contentFilter);
+      F.save(config());
+      const beforeStorage = localStorage.getItem(F.KEY), nativeSetItem = Storage.prototype.setItem;
+      let storageResult;
+      Storage.prototype.setItem = function(key,value) { if (key===F.KEY) throw Error('quota fixture'); return nativeSetItem.call(this,key,value); };
+      try { storageResult = F.toggleQuickUser({author:'storage-fail'}); }
+      finally { Storage.prototype.setItem = nativeSetItem; }
+      ok('QUICK 存储失败保持原配置且不开总开关', !storageResult.ok && localStorage.getItem(F.KEY)===beforeStorage && !LD.flags.contentFilter);
+      const badQuick = config({...rule('user','author','exact','alice'),quickUser:{userId:'8',author:'alice'}});
+      ok('QUICK 元数据与 ID 主条件不一致时拒绝配置', !F.validate(badQuick).ok);
+      F.setEnabled(false); F.save(config());
+    }
     const item = {kind:'topic',topicId:'100',title:'Alpha discussion',author:'starter',userId:'8',tags:['tech','news'],category:'技术',categoryId:'4'};
     for (const [label,r,input,hit] of [
       ['话题标题关键词忽略大小写',rule('topic','title','keyword','ALPHA'),item,true],
@@ -184,7 +219,35 @@
     const old=localStorage.getItem(F.KEY);panel.querySelector('.cf-json').value='{';panel.querySelector('.cf-import').click();
     ok('UI 导入错误可见且有效配置不变',panel.querySelector('.cf-message').textContent.includes('未保存')&&localStorage.getItem(F.KEY)===old);
     ok('UI 规则持久化 JSON 可导出往返',F.validate(JSON.parse(old)).ok);
-    F.setEnabled(false);finish();
+    F.save(config());F.setEnabled(false);history.pushState({},'', '/t/test/100');
+    fixture.innerHTML='<div class="topic-post" data-post-number="2"><div class="topic-avatar"><div class="post-avatar"><a data-user-card="alice"></a></div></div><article data-post-id="900" data-user-id="8"><div class="topic-meta-data"></div><div class="cooked">普通测试内容</div></article></div>';
+    F.scanQuickBlockButtons();
+    let post=fixture.querySelector('.topic-post'),postHost=fixture.querySelector('.post-avatar + .ldkit-quickblock-host'),postButton=postHost&&postHost.querySelector('button');
+    ok('QUICK DOM 话题头像下挂载且用作者 ID',!!postButton&&postHost.parentElement.classList.contains('topic-avatar')&&postButton.textContent==='本地屏蔽'&&postHost.dataset.userId==='8'&&postHost.dataset.author==='alice');
+    F.scanQuickBlockButtons();ok('QUICK DOM 重复扫描不重复挂载',fixture.querySelectorAll('.ldkit-quickblock-host').length===1);
+    postButton.click();await sleep(250);
+    ok('QUICK DOM 点击自动启用并同步按钮态',LD.flags.contentFilter&&postButton.getAttribute('aria-pressed')==='true'&&postButton.textContent==='撤销屏蔽'&&F.getConfig().rules[0].conditions[0].field==='userId');
+    await sleep(180);await F.scan(fixture);
+    ok('QUICK DOM 用户规则实际折叠作者帖子',post.classList.contains('ldkit-filter-folded'));
+    postButton.click();await sleep(180);
+    ok('QUICK DOM 再点撤销并恢复原帖子',F.getConfig().rules.length===0&&!post.classList.contains('ldkit-filter-folded')&&postButton.getAttribute('aria-pressed')==='false');
+    history.pushState({},'', '/u/alice/summary');fixture.innerHTML='<div class="user-profile-avatar"><div class="avatar"><img alt="display name"></div></div>';F.scanQuickBlockButtons();
+    let summaryHost=fixture.querySelector('.avatar + .ldkit-quickblock-host'),summaryButton=summaryHost&&summaryHost.querySelector('button');
+    ok('QUICK DOM summary 头像按路由用户名回退',!!summaryButton&&summaryHost.parentElement.classList.contains('user-profile-avatar')&&summaryHost.dataset.author==='alice');
+    summaryButton.click();await sleep(180);
+    ok('QUICK DOM summary 用户名规则可加入并撤销',F.getConfig().rules[0].conditions[0].field==='author'&&F.getConfig().rules[0].conditions[0].value==='alice'&&summaryButton.getAttribute('aria-pressed')==='true');
+    summaryButton.click();await sleep(150);
+    history.pushState({},'', '/latest');fixture.innerHTML='<div class="user-card"><div class="user-card-avatar-wrapper"><div class="user-card-avatar"><a href="/u/bob"><span class="avatar"></span></a></div></div></div>';
+    await sleep(100);
+    const card=fixture.querySelector('.user-card');let cardClicks=0;card.addEventListener('click',()=>cardClicks++);
+    let cardHost=card.querySelector('.user-card-avatar + .ldkit-quickblock-host'),cardButton=cardHost&&cardHost.querySelector('button');
+    ok('QUICK DOM 卡片头像从个人主页链接取用户名',!!cardButton&&cardHost.parentElement.classList.contains('user-card-avatar-wrapper')&&cardHost.dataset.author==='bob');
+    cardButton.click();await sleep(180);
+    ok('QUICK DOM 卡片按钮不冒泡且可撤销',cardClicks===0&&F.getConfig().rules[0].conditions[0].value==='bob'&&cardButton.getAttribute('aria-pressed')==='true');
+    card.querySelector('.user-card-avatar').outerHTML='<div class="user-card-avatar"><a href="/u/carol"><span class="avatar"></span></a></div>';await sleep(100);
+    ok('QUICK DOM 卡片头像替换后重绑且不重复',card.querySelectorAll('.ldkit-quickblock-host').length===1&&card.querySelector('.ldkit-quickblock-host').dataset.author==='carol');
+    history.pushState({},'', '/latest');fixture.textContent='';F.scanQuickBlockButtons();F.setEnabled(false);
+    F.save({version:1,spam:{enabled:false,maxChars:30,rules:[]},rules:[{id:'persist-topic',name:'持久化话题',enabled:true,target:'topic',conditions:[{field:'title',op:'keyword',value:'persist'}]},{id:'persist-user',name:'持久化用户',enabled:true,target:'user',conditions:[{field:'author',op:'exact',value:'persist_user'}]}]});finish();
   } catch(e) {ok('专项自检异常',false,e.stack||e.message);finish();}
 })();
 </script></body></html>
