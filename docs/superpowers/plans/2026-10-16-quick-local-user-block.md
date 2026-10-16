@@ -65,4 +65,4 @@
 - [x] Run `node --check linuxdo-toolbox.user.js`, `node --check scripts/content-filter.js`, and `node scripts/run-selfcheck.cjs`.
 - [x] Run `git diff --check`; verify the original 200 assertions and all new assertions pass (219/219 total).
 - [x] Use bsk with the authenticated Chrome profile on Linux.do only. A user-tab borrow confirmation timed out, so task-created Linux.do tabs were used. Temporary add/undo probes ran on post, summary, and card DOMs; no probe rule remains, the contentFilter flag is restored, and the final probe confirmed its captured config bytes and overlay style were restored. BSK physical selector click timed out under the overlay, so the reversible DOM click was dispatched through bsk evaluate. Live visual post folding was not confirmed; local DOM/worker tests cover it.
-- [ ] Inspect final diff/status and commit the verified implementation separately; do not push or publish.
+- [x] Inspect final diff/status and commit the verified implementation separately (`5751e3b`); do not push or publish.
