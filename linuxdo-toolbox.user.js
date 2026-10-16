@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LINUX DO 工具箱
 // @namespace    https://linux.do/
-// @version      2.11.1
-// @description  LINUX DO 工具箱：八个四字功能独立开关——密文自解（Base16/Base32/Base58/Base64/Base64URL）、原生复制、外链解锁、随读回应、已读提速、过盾重试、只看此人、内容过滤（头像下快速添加/撤销本地用户规则；水贴预设与话题/帖子/用户规则，默认关闭，仅本地可恢复折叠）。统一两级面板。仓库 github.com/hawchou1995/linuxdo-toolbox · 论坛 qingju.me
+// @version      2.12.0
+// @description  LINUX DO 工具箱：八个四字功能独立开关——密文自解（Base16/Base32/Base58/Base64/Base64URL）、原生复制、外链解锁、随读回应、已读提速、过盾重试、只看此人、内容过滤（头像下快速添加/撤销本地用户规则；可隐藏快捷按钮且规则继续生效；水贴预设与话题/帖子/用户规则，默认关闭，仅本地可恢复折叠）。统一两级面板。仓库 github.com/hawchou1995/linuxdo-toolbox · 论坛 qingju.me
 // @author       牛来 · XAUTHUB · HawChow · Sunwuyuan · adodo · Pipecraft
 // @match        https://linux.do/*
 // @match        https://qingju.me/*
@@ -18,6 +18,9 @@
 // ==/UserScript==
 
 /*
+ * v2.12.0 —— 内容过滤新增头像下「本地屏蔽」快捷按钮显示开关：
+ *           默认开启；关闭只隐藏三个入口，已有规则与过滤效果不变；离线 Chromium 自检 228/228。
+ *
  * v2.11.1 —— 将默认主页链接从 GitHub 改为 GreasyFork 脚本页，避免脚本猫打开主页时跳转到 GitHub；功能逻辑不变。
  *
  * v2.11.0 —— 内容过滤新增头像下「本地屏蔽」快捷入口：
@@ -1650,7 +1653,7 @@
       '<button type="button" class="mini" data-cfg-reset-all="1" title="恢复原七项参数；私人内容过滤规则保持不变">一键全默认</button>',
       '<span class="hint">参数改动即时生效，不用刷新</span>',
       '<div class="about">',
-      '<span class="ab-name">LINUX DO 工具箱 v2.11.1</span>',
+      '<span class="ab-name">LINUX DO 工具箱 v2.12.0</span>',
       '<a class="ab-link" href="https://github.com/hawchou1995/linuxdo-toolbox" target="_blank" rel="noopener noreferrer">GitHub 仓库</a>',
       '<a class="ab-link" href="https://qingju.me/" target="_blank" rel="noopener noreferrer">qingju.me 论坛</a>',
       '<span class="ab-note">源码开源 · 欢迎来青橘（qingju.me）一起折腾</span>',
@@ -4496,7 +4499,7 @@
       user: ['author', 'userId', 'topicId', 'title', 'tags', 'category', 'categoryId']
     };
     const LABELS = { topicId: '话题 ID', postId: '帖子 ID', title: '话题标题', body: '帖子正文', author: '作者用户名', userId: '作者 ID', topicAuthor: '话题发起者', tags: '标签', category: '类别名称', categoryId: '类别 ID' };
-    const defaults = () => ({ version: 1, spam: { enabled: true, maxChars: 30, rules: [
+    const defaults = () => ({ version: 1, quickBlockButtons: true, spam: { enabled: true, maxChars: 30, rules: [
       { id: 'spam-thanks', name: '纯感谢短语', enabled: true, op: 'regex', value: '^(谢谢|感谢分享|谢谢分享|感谢大佬|thanks|thx)[！!。.~～]*$', flags: 'i' },
       { id: 'spam-mark', name: '占位短语', enabled: true, op: 'regex', value: '^(mark|插眼|前排|沙发|帮顶|签到|打卡|来了)[！!。.~～]*$', flags: 'i' },
       { id: 'spam-laugh', name: '纯笑声或数字', enabled: true, op: 'regex', value: '^(哈{2,}|嘿{2,}|6{2,}|666)[！!。.~～]*$', flags: 'i' }
@@ -4515,6 +4518,8 @@
         }
         const c = JSON.parse(JSON.stringify(raw));
         if (!c || c.version !== 1 || !c.spam || !Array.isArray(c.rules) || !Array.isArray(c.spam.rules)) throw Error('需要 version=1、spam 和 rules 数组');
+        if (c.quickBlockButtons === undefined) c.quickBlockButtons = true;
+        if (typeof c.quickBlockButtons !== 'boolean') throw Error('快捷按钮设置必须为布尔值');
         if (typeof c.spam.enabled !== 'boolean' || !Number.isInteger(c.spam.maxChars) || c.spam.maxChars < 1 || c.spam.maxChars > 500) throw Error('水贴门槛必须是 1–500 的整数');
         if (c.rules.length + c.spam.rules.length > 200) throw Error('最多 200 条规则（含水贴预设）');
         const ids = new Set();
@@ -4916,6 +4921,10 @@
       });
     }
     function scanQuickBlockButtons() {
+      if (!config.quickBlockButtons) {
+        document.querySelectorAll('.ldkit-quickblock-host[data-ldkit-quickblock]').forEach(host => host.remove());
+        return;
+      }
       const targets = [], add = (avatar, owner, after, parent, allowRouteUsername, readDescendantId) => {
         if (!avatar || !after || !parent || !owner) return;
         const identity = identityForAvatar(avatar, owner, allowRouteUsername, readDescendantId);
@@ -5069,6 +5078,8 @@
         });
       });
       mounted.querySelector('.cf-spam-on').checked = config.spam.enabled;
+      const quickButtonsSwitch = mounted.querySelector('.cf-quick-buttons-on');
+      if (quickButtonsSwitch) quickButtonsSwitch.checked = config.quickBlockButtons;
       mounted.querySelector('.cf-max').value = String(config.spam.maxChars);
     }
     function openEditor(rule, spam) {
@@ -5148,6 +5159,8 @@
         '<label class="cf-lbl"><span class="sw"><input class="cf-spam-on" type="checkbox"><i></i></span>启用水贴预设</label>',
         '<label class="cf-lbl">短文本最多 <input class="cf-num cf-max" type="number" min="1" max="500"> 字</label>',
         '</div><div class="row-btns"><button type="button" class="mini cf-add-spam">新增预设</button><button type="button" class="mini cf-spam-save">保存水贴设置</button></div></div>',
+        '<div class="svc-sec">快捷入口</div>',
+        '<div class="cf-card"><label class="cf-lbl"><span class="sw"><input class="cf-quick-buttons-on" type="checkbox"><i></i></span>显示头像下的本地屏蔽按钮</label><p class="cf-note">关闭仅隐藏按钮；已保存的本地屏蔽规则继续生效。</p></div>',
         '<div class="svc-sec">规则</div>',
         '<div class="cf-list cf-rule-list"></div>',
         '<div class="row-btns"><button type="button" class="mini cf-add">新增屏蔽规则</button></div>',
@@ -5159,6 +5172,15 @@
         '</details>',
         '<p class="cf-message" role="status"></p>'
       ].join('');
+      const quickButtonsSwitch = mounted.querySelector('.cf-quick-buttons-on');
+      quickButtonsSwitch.checked = config.quickBlockButtons;
+      quickButtonsSwitch.addEventListener('change', () => {
+        const next = JSON.parse(JSON.stringify(config));
+        next.quickBlockButtons = quickButtonsSwitch.checked;
+        const result = save(next);
+        if (result.ok) scanQuickBlockButtons();
+        else quickButtonsSwitch.checked = config.quickBlockButtons;
+      });
       mounted.querySelector('.cf-spam-save').onclick = () => { const c = JSON.parse(JSON.stringify(config)); c.spam.enabled = mounted.querySelector('.cf-spam-on').checked; c.spam.maxChars = Number(mounted.querySelector('.cf-max').value); save(c); };
       mounted.querySelector('.cf-add').onclick = () => openEditor(ruleExample('topic'), false);
       mounted.querySelector('.cf-add-spam').onclick = () => openEditor({id:'spam-'+Date.now().toString(36),name:'新水贴预设',enabled:true,op:'exact',value:'示例短语'}, true);
@@ -5177,7 +5199,7 @@
   // ---------- 测试/调试出口（无副作用） ----------
   try {
     window.__LDB64__ = {
-      version: '2.11.1',                        // 与脚本头 @version 保持同步（供调试与自检读取）
+      version: '2.12.0',                        // 与脚本头 @version 保持同步（供调试与自检读取）
       flags: FLAGS,
       contentFilter: ContentFilter,
       CFG: CFG,

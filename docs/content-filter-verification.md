@@ -130,3 +130,15 @@
 **GreasyFork 596713 发布与回抓**：已通过 bsk 更新既有公开条目；脚本页显示版本 2.11.1。匿名回抓版本历史 HTTP 200，含 v2.11.1 与对应 changelog；CDN HTTP 200、`text/javascript; charset=utf-8`，源码 **284802 bytes**，SHA-256 `FEB3BA8ACB27573E6F5C314BB5384F8D80F5BD3773F6439E3EBC6B8365AA06E0`，与本地逐字节一致。CDN 元数据确认 `@homepageURL` 为 GreasyFork 596713、`@match` 仍为 3/3，`@downloadURL` / `@updateURL` 保持原值。
 
 **发布表单核验**：提交前页面 textarea 实值与本地脚本 SHA-256 一致；附加说明 10662 bytes / `F72BFAD1338A02980F2DBA97C409922C67B40898D511E6A3BFF49660EBB3AF6A`，更新日志 183 bytes / `78487A7E61B6FAD9234FE703480E5B7793ECE4BAAEBA4C4DF6EB3E4B65302B03`，均与本地发布文本一致；公开脚本类型保留，成人内容未勾选。未推送 GitHub。
+
+## v2.12.0：内容过滤快捷入口显示开关
+
+日期：2026-10-16。内容过滤配置 `ldkit.contentFilter.v1` 新增 `quickBlockButtons` 布尔项，默认 `true`；旧配置缺字段时补成 `true`。内容过滤面板新增「快捷入口」开关，关闭仅移除帖子、个人资料和用户卡片头像下的按钮；已保存规则保留并继续过滤，重新开启后立即恢复当前页入口。
+
+**离线验证**：默认值、旧配置兼容、无效类型、三处 DOM 挂载/移除、隐藏期间规则折叠、重开按钮状态及刷新持久化均通过；`node scripts/build-content-filter.cjs --check` exact match，三项 `node --check` 通过，`node scripts/run-selfcheck.cjs` **228/228 PASS**，`git diff --check` 通过。
+
+**GreasyFork 596713 更新与回抓**：更新既有条目；版本历史检出 `v2.12.0` 与新增 changelog。CDN 回抓 **286429 bytes**，SHA-256 `FBE51D44C9A3753D6078E8C9E01AD7C056CB24ECA5D3FA0763374796B512FBAB`，与本地逐字节一致。
+
+**提交前字段核验**：源码 286429 bytes / `FBE51D44C9A3753D6078E8C9E01AD7C056CB24ECA5D3FA0763374796B512FBAB`；附加信息 10988 bytes / `0FD876BA8E5C3593E234444CCFCB1CC697FB6EBB5B626BDE300639A70D94CC64`（Markdown）；更新日志 211 bytes / `32CDECD375D1E3662173EA24D866C6D94BFCA31F4BA630B696536FC340BC7132`；脚本类型公开，成人标记未选。
+
+**GreasyFork 操作范围**：更新已有脚本条目 596713，未新建条目。

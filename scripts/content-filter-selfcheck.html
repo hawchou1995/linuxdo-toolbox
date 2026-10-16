@@ -17,6 +17,7 @@
     const LD = window.__LDB64__, F = LD.contentFilter, sh = document.querySelector('#ldb64-manual-host').shadowRoot;
     if (location.pathname === '/filter-persist') {
       ok('PERSIST 重新加载后规则数恢复', F.getConfig().rules.length === 2);
+      ok('PERSIST 重新加载后快捷按钮关闭状态恢复', F.getConfig().quickBlockButtons === false);
       ok('PERSIST 重新加载后 JSON 可校验', F.validate(localStorage.getItem(F.KEY)).ok);
       ok('PERSIST 重新加载后面板回显配置', JSON.parse(sh.querySelector('.cf-json').value).rules.length === 2);
       finish(); return;
@@ -38,6 +39,8 @@
     swHit.click();await sleep(280);
     ok('SWITCH 再点一次即还原', LD.flags.contentFilter === swBefore);
     const cfPanel = sh.querySelector('.cf-panel');
+    const quickButtonsSwitch = cfPanel.querySelector('.cf-quick-buttons-on');
+    ok('QUICKUI 快捷按钮开关默认开启', !!quickButtonsSwitch && quickButtonsSwitch.checked);
     ok('CF03 复用面板既有设计语言', !!sh.querySelector('#ldkit-cf-style') && !!cfPanel.querySelector('.svc-sec') && !!cfPanel.querySelector('.cf-card') && !!cfPanel.querySelector('.cf-json-box'));
     cfPanel.querySelector('.cf-add').click();
     const cfConds = Array.from(cfPanel.querySelectorAll('.cf-cond'));
@@ -46,6 +49,11 @@
     cfPanel.querySelector('.cf-editor .cf-cancel').click();
     ok('CF05 取消编辑收起编辑器', cfPanel.querySelector('.cf-editor').hidden === true);
     const config = (...rules) => ({version:1,spam:{enabled:false,maxChars:30,rules:[]},rules});
+    const legacyQuickConfig = {version:1,spam:{enabled:false,maxChars:30,rules:[]},rules:[]};
+    const legacyQuickResult = F.validate(legacyQuickConfig);
+    ok('QUICKCFG 默认显示快速按钮', F.defaults().quickBlockButtons === true);
+    ok('QUICKCFG 旧配置缺字段默认开启', legacyQuickResult.ok && legacyQuickResult.config.quickBlockButtons === true);
+    ok('QUICKCFG 非布尔值拒绝导入', !F.validate({...legacyQuickConfig,quickBlockButtons:'false'}).ok);
     const rule = (target, field, op, value, flags) => ({id:'test',name:'合成测试',enabled:true,target,conditions:[{field,op,value,...(flags ? {flags} : {})}]});
     if (typeof F.getQuickUserState !== 'function' || typeof F.toggleQuickUser !== 'function') {
       ok('QUICK API 提供身份状态与快速切换', false, 'API 尚未实现');
@@ -181,9 +189,12 @@
     ok('LIST 元数据补齐后重判',row.classList.contains('ldkit-filter-folded'));
     history.pushState({},'', '/t/test/100');F.save(config(rule('topic','topicId','exact','100')));
     fixture.innerHTML='<div id="topic-title"><h1>合成话题</h1></div><div class="post-stream">'+postHTML(1,'首帖仍可恢复')+'</div>';await sleep(2000);
+    for(let i=0;i<20&&!fixture.querySelector('.post-stream')?.classList.contains('ldkit-filter-folded');i++){await F.scan(fixture);await sleep(100);}
     const stream=fixture.querySelector('.post-stream');
-    ok('TOPIC 直接打开显示原因和展开入口而非跳走',stream.classList.contains('ldkit-filter-folded')&&!!stream.previousElementSibling.querySelector('button')&&location.pathname==='/t/test/100');
-    stream.previousElementSibling.querySelector('button').click();ok('TOPIC 直接话题可展开',!stream.classList.contains('ldkit-filter-folded'));
+    const topicExpandButton=stream.previousElementSibling?.querySelector('button');
+    ok('TOPIC 直接打开显示原因和展开入口而非跳走',stream.classList.contains('ldkit-filter-folded')&&!!topicExpandButton&&location.pathname==='/t/test/100', 'stream='+stream.className+' / placeholder='+!!stream.previousElementSibling);
+    if(topicExpandButton) topicExpandButton.click();
+    ok('TOPIC 直接话题可展开',!!topicExpandButton&&!stream.classList.contains('ldkit-filter-folded'));
     history.pushState({},'', '/latest');fixture.textContent='';await sleep(1800);
     ok('SPA 离开话题清除旧折叠占位',!document.querySelector('.ldkit-filter-placeholder'));
     const nativeFetch=window.fetch;let fetchCount=0;
@@ -246,8 +257,23 @@
     ok('QUICK DOM 卡片按钮不冒泡且可撤销',cardClicks===0&&F.getConfig().rules[0].conditions[0].value==='bob'&&cardButton.getAttribute('aria-pressed')==='true');
     card.querySelector('.user-card-avatar').outerHTML='<div class="user-card-avatar"><a href="/u/carol"><span class="avatar"></span></a></div>';await sleep(100);
     ok('QUICK DOM 卡片头像替换后重绑且不重复',card.querySelectorAll('.ldkit-quickblock-host').length===1&&card.querySelector('.ldkit-quickblock-host').dataset.author==='carol');
+    F.save(config());F.setEnabled(false);history.pushState({},'', '/u/alice/summary');
+    fixture.innerHTML='<div class="topic-post" data-post-number="2"><div class="topic-avatar"><div class="post-avatar"><a data-user-card="alice"></a></div></div><article data-post-id="900" data-user-id="8"><div class="topic-meta-data"><div class="names"><a data-user-card="alice">alice</a></div></div><div class="cooked">规则保留测试</div></article></div>'
+      + '<div class="user-profile-avatar"><div class="avatar"><img alt="alice"></div></div>'
+      + '<div class="user-card"><div class="user-card-avatar-wrapper"><div class="user-card-avatar" data-user-id="8"><a href="/u/alice"><span class="avatar"></span></a></div></div></div>';
+    F.scanQuickBlockButtons();
+    ok('QUICKUI 帖子资料卡片三个入口均已挂载',fixture.querySelectorAll('.ldkit-quickblock-host').length===3);
+    F.toggleQuickUser({userId:'8',author:'alice'});F.scanQuickBlockButtons();await F.scan(fixture);
+    quickButtonsSwitch.checked=false;quickButtonsSwitch.dispatchEvent(new Event('change'));await sleep(80);
+    ok('QUICKUI 关闭后移除全部三个入口',fixture.querySelectorAll('.ldkit-quickblock-host').length===0);
+    for(let i=0;i<12&&!fixture.querySelector('.topic-post').classList.contains('ldkit-filter-folded');i++){await F.scan(fixture);await sleep(50);}
+    const retainedQuickRule=F.getConfig().rules.find(r=>r.quickUser&&r.quickUser.userId==='8');
+    ok('QUICKUI 隐藏不删规则且帖子仍按规则折叠',!!retainedQuickRule&&retainedQuickRule.enabled&&fixture.querySelector('.topic-post').classList.contains('ldkit-filter-folded'));
+    quickButtonsSwitch.checked=true;quickButtonsSwitch.dispatchEvent(new Event('change'));await sleep(80);
+    const restoredQuickButton=fixture.querySelector('.topic-post .ldkit-quickblock-host button');
+    ok('QUICKUI 重开恢复三个入口及已屏蔽按钮态',fixture.querySelectorAll('.ldkit-quickblock-host').length===3&&!!restoredQuickButton&&restoredQuickButton.getAttribute('aria-pressed')==='true'&&restoredQuickButton.textContent==='撤销屏蔽');
     history.pushState({},'', '/latest');fixture.textContent='';F.scanQuickBlockButtons();F.setEnabled(false);
-    F.save({version:1,spam:{enabled:false,maxChars:30,rules:[]},rules:[{id:'persist-topic',name:'持久化话题',enabled:true,target:'topic',conditions:[{field:'title',op:'keyword',value:'persist'}]},{id:'persist-user',name:'持久化用户',enabled:true,target:'user',conditions:[{field:'author',op:'exact',value:'persist_user'}]}]});finish();
+    F.save({version:1,quickBlockButtons:false,spam:{enabled:false,maxChars:30,rules:[]},rules:[{id:'persist-topic',name:'持久化话题',enabled:true,target:'topic',conditions:[{field:'title',op:'keyword',value:'persist'}]},{id:'persist-user',name:'持久化用户',enabled:true,target:'user',conditions:[{field:'author',op:'exact',value:'persist_user'}]}]});finish();
   } catch(e) {ok('专项自检异常',false,e.stack||e.message);finish();}
 })();
 </script></body></html>
